@@ -2,6 +2,7 @@ import os
 import logging
 import threading
 import requests
+import time
 from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
 from telegram.ext import (
     Application,
@@ -45,19 +46,24 @@ markup = ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True)
 async def health(update: Update, context: CallbackContext) -> None:
     """Эндпоинт для проверки работоспособности"""
     await update.message.reply_text(f"✅ {BOT_NAME} работает нормально!\n"
-                                 f"WEBHOOK_URL: {WEBHOOK_URL or 'POLLING MODE'}")
+                                 f"Режим: {'WEBHOOK' if WEBHOOK_URL else 'POLLING'}")
 
 def keep_awake():
     """Функция для поддержания активности на Render"""
+    # Дадим приложению время запуститься перед первым пингом
+    time.sleep(10)
+    
     while True:
         try:
             if WEBHOOK_URL:
-                health_url = f"{WEBHOOK_URL}/health"
-                response = requests.get(health_url, timeout=10)
-                logger.info(f"Keep-alive ping to {health_url}, status: {response.status_code}")
+                # Используем базовый URL без /health для пинга
+                base_url = WEBHOOK_URL
+                response = requests.get(base_url, timeout=5)
+                logger.info(f"Keep-alive ping to {base_url}, status: {response.status_code}")
         except Exception as e:
             logger.error(f"Keep-alive error: {str(e)}")
-        threading.Event().wait(300)  # Каждые 5 минут
+        # Увеличим интервал до 10 минут
+        threading.Event().wait(600)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user = update.message.from_user
@@ -158,8 +164,9 @@ def main() -> None:
         application.run_webhook(
             listen="0.0.0.0",
             port=port,
-            webhook_url=f"{WEBHOOK_URL}/{SECRET_TOKEN}",
-            secret_token=SECRET_TOKEN
+            webhook_url=WEBHOOK_URL,
+            secret_token=SECRET_TOKEN,
+            drop_pending_updates=True  # Игнорировать обновления, пропущенные во время простоя
         )
     else:
         logger.info("Starting bot in POLLING mode")
