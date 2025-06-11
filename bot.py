@@ -1,0 +1,161 @@
+import os
+import logging
+import threading
+import requests
+from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    MessageHandler,
+    filters,
+    ContextTypes,
+    ConversationHandler
+)
+
+# Конфигурация
+TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
+WEBHOOK_URL = os.getenv('WEBHOOK_URL')
+SECRET_TOKEN = os.getenv('SECRET_TOKEN')
+BOT_NAME = "@QaPollsBot"
+
+# Настройка логирования
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
+logger.info(f"Starting {BOT_NAME} with token: {TOKEN[:5]}...{TOKEN[-5:]}")
+
+# Функция поддержания активности
+def keep_awake():
+    while True:
+        try:
+            if WEBHOOK_URL:
+                base_url = WEBHOOK_URL.rsplit('/', 1)[0]
+                response = requests.get(base_url, timeout=10)
+                logger.info(f"Keep-alive ping sent, status: {response.status_code}")
+        except Exception as e:
+            logger.error(f"Keep-alive error: {e}")
+        threading.Event().wait(300)  # Каждые 5 минут
+
+# Состояния разговора
+QUESTIONS, NAME, EMAIL = range(3)
+
+# Вопросы теста
+questions = [
+    "Замечаете ли вы опечатки в текстах?",
+    "Любите ли вы решать головоломки и логические задачи?",
+    "Как вы реагируете на необходимость многократно проверять одно и то же?",
+    "Изучая новое приложение, вы стараетесь разобраться во всех его функциях?",
+    "Насколько вам интересны новые технологии и IT-сфера?"
+]
+
+# Клавиатура для ответов
+reply_keyboard = [["1", "2", "3", "4", "5"]]
+markup = ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True)
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    user = update.message.from_user
+    logger.info(f"User {user.id} started conversation")
+    await update.message.reply_text(
+        f"Привет, {user.first_name}! Я {BOT_NAME}, помогу определить твою предрасположенность к тестированию ПО.\n\n"
+        "Ответь на 5 вопросов по шкале от 1 до 5, где:\n"
+        "1 - совсем не обо мне\n"
+        "5 - это точно про меня\n\n"
+        "Первый вопрос:\n" + questions[0],
+        reply_markup=markup
+    )
+    return QUESTIONS
+
+async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    answer = update.message.text
+    if not answer.isdigit() or int(answer) < 1 or int(answer) > 5:
+        await update.message.reply_text("Пожалуйста, выберите цифру от 1 до 5", reply_markup=markup)
+        return QUESTIONS
+    
+    context.user_data.setdefault('answers', []).append(int(answer))
+    question_index = len(context.user_data['answers'])
+    
+    if question_index < len(questions):
+        await update.message.reply_text(questions[question_index], reply_markup=markup)
+        return QUESTIONS
+    
+    await update.message.reply_text(
+        "Тест завершен! Введите ваше имя:",
+        reply_markup=ReplyKeyboardRemove()
+    )
+    return NAME
+
+async def get_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    context.user_data['name'] = update.message.text
+    await update.message.reply_text("Введите ваш email для получения результатов:")
+    return EMAIL
+
+async def get_email(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    email = update.message.text
+    context.user_data['email'] = email
+    
+    # Расчет результатов
+    total = sum(context.user_data['answers'])
+    result = "🔍 Ваши результаты 🔍\n\n"
+    
+    if total >= 6:
+        result += "Отличные задатки для тестировщика! Рекомендуем пройти наш курс:\nhttps://example.com/course"
+    elif total == 5:
+        result += "Есть потенциал! Развивайте навыки внимательности."
+    else:
+        result += "Тестирование может не быть вашим призванием, но попробуйте наш вводный урок:\nhttps://example.com/trial"
+    
+    await update.message.reply_text(result)
+    
+    # Кнопка для повторного прохождения
+    await update.message.reply_text(
+        "Хотите пройти тест еще раз?",
+        reply_markup=ReplyKeyboardMarkup([["/start"]], one_time_keyboard=True)
+    )
+    
+    # Логирование результата
+    logger.info(f"User completed test: {context.user_data}")
+    return ConversationHandler.END
+
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    await update.message.reply_text("Тест отменен", reply_markup=ReplyKeyboardRemove())
+    logger.info("Test canceled by user")
+    return ConversationHandler.END
+
+def main() -> None:
+    # Создаем Application
+    application = Application.builder().token(TOKEN).build()
+    
+    # Настройка ConversationHandler
+    conv_handler = ConversationHandler(
+        entry_points=[CommandHandler("start", start)],
+        states={
+            QUESTIONS: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_answer)],
+            NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_name)],
+            EMAIL: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_email)]
+        },
+        fallbacks=[CommandHandler("cancel", cancel)]
+    )
+    
+    application.add_handler(conv_handler)
+    
+    # Запуск функции поддержания активности
+    threading.Thread(target=keep_awake, daemon=True).start()
+    
+    # Настройка вебхука
+    if WEBHOOK_URL and SECRET_TOKEN:
+        port = int(os.environ.get("PORT", 10000))
+        application.run_webhook(
+            listen="0.0.0.0",
+            port=port,
+            webhook_url=WEBHOOK_URL,
+            secret_token=SECRET_TOKEN
+        )
+        logger.info(f"Running in WEBHOOK mode: {WEBHOOK_URL}")
+    else:
+        application.run_polling()
+        logger.info("Running in POLLING mode")
+
+if __name__ == "__main__":
+    main()
