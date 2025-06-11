@@ -9,13 +9,14 @@ from telegram.ext import (
     MessageHandler,
     filters,
     ContextTypes,
-    ConversationHandler
+    ConversationHandler,
+    CallbackContext
 )
 
 # Конфигурация
 TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
-WEBHOOK_URL = os.getenv('WEBHOOK_URL')
-SECRET_TOKEN = os.getenv('SECRET_TOKEN')
+WEBHOOK_URL = os.getenv('WEBHOOK_URL', '').rstrip('/')  # Удаляем слэш в конце
+SECRET_TOKEN = os.getenv('SECRET_TOKEN', 'default-secret-token')
 BOT_NAME = "@QaPollsBot"
 
 # Настройка логирования
@@ -24,19 +25,6 @@ logging.basicConfig(
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
-logger.info(f"Starting {BOT_NAME} with token: {TOKEN[:5]}...{TOKEN[-5:]}")
-
-# Функция поддержания активности
-def keep_awake():
-    while True:
-        try:
-            if WEBHOOK_URL:
-                base_url = WEBHOOK_URL.rsplit('/', 1)[0]
-                response = requests.get(base_url, timeout=10)
-                logger.info(f"Keep-alive ping sent, status: {response.status_code}")
-        except Exception as e:
-            logger.error(f"Keep-alive error: {e}")
-        threading.Event().wait(300)  # Каждые 5 минут
 
 # Состояния разговора
 QUESTIONS, NAME, EMAIL = range(3)
@@ -53,6 +41,23 @@ questions = [
 # Клавиатура для ответов
 reply_keyboard = [["1", "2", "3", "4", "5"]]
 markup = ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True)
+
+async def health(update: Update, context: CallbackContext) -> None:
+    """Эндпоинт для проверки работоспособности"""
+    await update.message.reply_text(f"✅ {BOT_NAME} работает нормально!\n"
+                                 f"WEBHOOK_URL: {WEBHOOK_URL or 'POLLING MODE'}")
+
+def keep_awake():
+    """Функция для поддержания активности на Render"""
+    while True:
+        try:
+            if WEBHOOK_URL:
+                health_url = f"{WEBHOOK_URL}/health"
+                response = requests.get(health_url, timeout=10)
+                logger.info(f"Keep-alive ping to {health_url}, status: {response.status_code}")
+        except Exception as e:
+            logger.error(f"Keep-alive error: {str(e)}")
+        threading.Event().wait(300)  # Каждые 5 минут
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user = update.message.from_user
@@ -114,7 +119,6 @@ async def get_email(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         reply_markup=ReplyKeyboardMarkup([["/start"]], one_time_keyboard=True)
     )
     
-    # Логирование результата
     logger.info(f"User completed test: {context.user_data}")
     return ConversationHandler.END
 
@@ -126,6 +130,9 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 def main() -> None:
     # Создаем Application
     application = Application.builder().token(TOKEN).build()
+    
+    # Добавляем health-эндпоинт
+    application.add_handler(CommandHandler("health", health))
     
     # Настройка ConversationHandler
     conv_handler = ConversationHandler(
@@ -143,19 +150,22 @@ def main() -> None:
     # Запуск функции поддержания активности
     threading.Thread(target=keep_awake, daemon=True).start()
     
-    # Настройка вебхука
-    if WEBHOOK_URL and SECRET_TOKEN:
-        port = int(os.environ.get("PORT", 10000))
+    # Определяем порт для Render
+    port = int(os.environ.get("PORT", 10000))
+    
+    if WEBHOOK_URL:
+        logger.info(f"Starting bot in WEBHOOK mode on port {port}")
         application.run_webhook(
             listen="0.0.0.0",
             port=port,
-            webhook_url=WEBHOOK_URL,
+            webhook_url=f"{WEBHOOK_URL}/{SECRET_TOKEN}",
             secret_token=SECRET_TOKEN
         )
-        logger.info(f"Running in WEBHOOK mode: {WEBHOOK_URL}")
     else:
+        logger.info("Starting bot in POLLING mode")
         application.run_polling()
-        logger.info("Running in POLLING mode")
 
 if __name__ == "__main__":
+    logger.info(f"Starting {BOT_NAME} with token: {TOKEN[:5]}...{TOKEN[-5:]}")
+    logger.info(f"WEBHOOK_URL: {WEBHOOK_URL or 'Not set, using POLLING'}")
     main()
