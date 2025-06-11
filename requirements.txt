@@ -1,6 +1,6 @@
-python-telegram-bot[ext]==20.3  # Включает webhooks и другие расширения
-python-dotenv==1.0.0            # Для работы с .env файлами
-requests==2.31.0                # Для HTTP-запросов (keep-alive)
-httpx==0.26.0                   # Асинхронные HTTP-запросы
-certifi==2023.11.17             # SSL-сертификаты
-apscheduler==3.10.1             # Для планировщика задач (опционально)
+python-telegram-bot[webhooks]==20.3
+python-dotenv==1.0.0
+requests==2.31.0
+httpx~=0.24.0  # Совместимая версия с python-telegram-bot 20.3
+certifi>=2023.11.17
+apscheduler==3.10.1
