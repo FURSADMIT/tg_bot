@@ -23,7 +23,7 @@ BOT_NAME = "@QaPollsBot"
 # Настройка логирования
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    level=logging.DEBUG  # Изменено на DEBUG для диагностики
+    level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
@@ -50,7 +50,7 @@ async def health(update: Update, context: CallbackContext) -> None:
 
 async def log_all_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Логируем все входящие сообщения для диагностики"""
-    logger.debug(f"Received message: {update.message.text} (User: {update.effective_user.id})")
+    logger.info(f"Received message: {update.message.text} (User: {update.effective_user.id})")
 
 def keep_awake(app_url):
     """Функция для поддержания активности на Render"""
@@ -60,11 +60,13 @@ def keep_awake(app_url):
     while True:
         try:
             if app_url:
-                response = requests.head(app_url, timeout=5)
-                if response.status_code in (200, 405, 404):
+                response = requests.get(app_url + "/health", timeout=10)
+                if response.status_code == 200:
                     logger.info(f"Keep-alive: Service is alive (status {response.status_code})")
                 else:
                     logger.warning(f"Unexpected status: {response.status_code}")
+            else:
+                logger.info("Keep-alive: WEBHOOK_URL not set, skipping")
         except Exception as e:
             logger.error(f"Keep-alive error: {str(e)}")
         time.sleep(600)
@@ -73,8 +75,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user = update.message.from_user
     logger.info(f"Command /start received from user {user.id}")
     
-    # Очищаем предыдущие ответы
+    # Очищаем предыдущие ответы и устанавливаем индекс текущего вопроса
     context.user_data.clear()
+    context.user_data['answers'] = []
+    context.user_data['current_question'] = 0
     
     await update.message.reply_text(
         f"Привет, {user.first_name}! Я {BOT_NAME}, помогу определить твою предрасположенность к тестированию ПО.\n\n"
@@ -87,25 +91,41 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     return QUESTIONS
 
 async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    user = update.message.from_user
     answer = update.message.text
-    logger.info(f"User answer: {answer}")
+    logger.info(f"User {user.id} answer: {answer}")
     
+    # Проверяем корректность ответа
     if not answer.isdigit() or int(answer) < 1 or int(answer) > 5:
-        await update.message.reply_text("Пожалуйста, выберите цифру от 1 до 5", reply_markup=markup)
+        current_question = context.user_data.get('current_question', 0)
+        await update.message.reply_text(
+            "Пожалуйста, выберите цифру от 1 до 5",
+            reply_markup=markup
+        )
+        # Повторно задаем текущий вопрос
+        await update.message.reply_text(questions[current_question], reply_markup=markup)
         return QUESTIONS
     
-    context.user_data.setdefault('answers', []).append(int(answer))
-    question_index = len(context.user_data['answers'])
+    # Сохраняем ответ и переходим к следующему вопросу
+    current_question = context.user_data.get('current_question', 0)
+    context.user_data['answers'].append(int(answer))
+    context.user_data['current_question'] = current_question + 1
+    next_question_index = current_question + 1
     
-    if question_index < len(questions):
-        await update.message.reply_text(questions[question_index], reply_markup=markup)
+    logger.info(f"User {user.id} answers: {context.user_data['answers']}")
+    
+    if next_question_index < len(questions):
+        await update.message.reply_text(questions[next_question_index], reply_markup=markup)
         return QUESTIONS
     
     # Все вопросы отвечены - показываем результат
     total = sum(context.user_data['answers'])
+    logger.info(f"Test completed for user {user.id}. Score: {total}")
+    
     result = "🔍 *Ваши результаты* 🔍\n\n"
     
-    if total >= 6:
+    # Обновленные условия оценки
+    if total >= 20:
         result += (
             "🚀 *Отличные задатки для тестировщика!*\n\n"
             "Твой результат показывает высокую предрасположенность к QA. "
@@ -113,7 +133,7 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
             "👉 Напиши мне в Telegram [@Dmitrii_Fursa8](https://t.me/Dmitrii_Fursa8)\n\n"
             "Подписывайся на мой канал: [QA Mentor](https://t.me/qa_mentor)"
         )
-    elif total == 5:
+    elif total >= 15:
         result += (
             "🌟 *Хороший потенциал!*\n\n"
             "У тебя есть базовые качества тестировщика. "
@@ -140,16 +160,16 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     
     # Кнопка для повторного прохождения
     await update.message.reply_text(
-        "Хотите пройти тест еще раз?",
+        "Хотите пройти тест еще раз? Используйте команду /start",
         reply_markup=ReplyKeyboardMarkup([["/start"]], one_time_keyboard=True)
     )
     
-    logger.info(f"Test completed. Score: {total}")
     return ConversationHandler.END
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    user = update.message.from_user
     await update.message.reply_text("Тест отменен", reply_markup=ReplyKeyboardRemove())
-    logger.info("Test canceled")
+    logger.info(f"Test canceled by user {user.id}")
     return ConversationHandler.END
 
 def main() -> None:
@@ -168,7 +188,8 @@ def main() -> None:
         states={
             QUESTIONS: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_answer)]
         },
-        fallbacks=[CommandHandler("cancel", cancel)]
+        fallbacks=[CommandHandler("cancel", cancel)],
+        allow_reentry=True
     )
     application.add_handler(conv_handler)
     
@@ -185,6 +206,12 @@ def main() -> None:
             daemon=True
         ).start()
         
+        # Добавляем эндпоинт для keep-alive
+        async def health_endpoint(update, context):
+            await update.message.reply_text("OK")
+        
+        application.add_handler(CommandHandler("health", health_endpoint))
+        
         application.run_webhook(
             listen="0.0.0.0",
             port=port,
@@ -197,7 +224,6 @@ def main() -> None:
         application.run_polling()
 
 if __name__ == "__main__":
-    logger.info(f"Starting {BOT_NAME} with token: {TOKEN[:5]}...{TOKEN[-5:]}")
+    logger.info(f"Starting {BOT_NAME}")
     logger.info(f"WEBHOOK_URL: {WEBHOOK_URL or 'Not set, using POLLING'}")
-    logger.info(f"SECRET_TOKEN: {SECRET_TOKEN[:3]}...")  # Логируем только начало токена
     main()
