@@ -23,7 +23,7 @@ BOT_NAME = "@QaPollsBot"
 # Настройка логирования
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    level=logging.INFO
+    level=logging.DEBUG  # Изменено на DEBUG для диагностики
 )
 logger = logging.getLogger(__name__)
 
@@ -48,6 +48,10 @@ async def health(update: Update, context: CallbackContext) -> None:
     await update.message.reply_text(f"✅ {BOT_NAME} работает нормально!\n"
                                  f"Режим: {'WEBHOOK' if WEBHOOK_URL else 'POLLING'}")
 
+async def log_all_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Логируем все входящие сообщения для диагностики"""
+    logger.debug(f"Received message: {update.message.text} (User: {update.effective_user.id})")
+
 def keep_awake(app_url):
     """Функция для поддержания активности на Render"""
     time.sleep(15)
@@ -56,10 +60,7 @@ def keep_awake(app_url):
     while True:
         try:
             if app_url:
-                # Используем HEAD-запрос вместо GET
                 response = requests.head(app_url, timeout=5)
-                
-                # Принимаем 200, 405 и 404 как успешные ответы
                 if response.status_code in (200, 405, 404):
                     logger.info(f"Keep-alive: Service is alive (status {response.status_code})")
                 else:
@@ -70,7 +71,7 @@ def keep_awake(app_url):
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user = update.message.from_user
-    logger.info(f"User {user.id} started conversation")
+    logger.info(f"Command /start received from user {user.id}")
     
     # Очищаем предыдущие ответы
     context.user_data.clear()
@@ -87,6 +88,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
 async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     answer = update.message.text
+    logger.info(f"User answer: {answer}")
+    
     if not answer.isdigit() or int(answer) < 1 or int(answer) > 5:
         await update.message.reply_text("Пожалуйста, выберите цифру от 1 до 5", reply_markup=markup)
         return QUESTIONS
@@ -141,20 +144,23 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         reply_markup=ReplyKeyboardMarkup([["/start"]], one_time_keyboard=True)
     )
     
-    logger.info(f"User completed test with score: {total}")
+    logger.info(f"Test completed. Score: {total}")
     return ConversationHandler.END
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await update.message.reply_text("Тест отменен", reply_markup=ReplyKeyboardRemove())
-    logger.info("Test canceled by user")
+    logger.info("Test canceled")
     return ConversationHandler.END
 
 def main() -> None:
     # Создаем Application
     application = Application.builder().token(TOKEN).build()
     
-    # Добавляем health-эндпоинт
+    # Явная регистрация обработчиков
     application.add_handler(CommandHandler("health", health))
+    
+    # Обработчик для логгирования всех сообщений
+    application.add_handler(MessageHandler(filters.ALL, log_all_messages))
     
     # Настройка ConversationHandler
     conv_handler = ConversationHandler(
@@ -164,7 +170,6 @@ def main() -> None:
         },
         fallbacks=[CommandHandler("cancel", cancel)]
     )
-    
     application.add_handler(conv_handler)
     
     # Определяем порт для Render
@@ -194,4 +199,5 @@ def main() -> None:
 if __name__ == "__main__":
     logger.info(f"Starting {BOT_NAME} with token: {TOKEN[:5]}...{TOKEN[-5:]}")
     logger.info(f"WEBHOOK_URL: {WEBHOOK_URL or 'Not set, using POLLING'}")
+    logger.info(f"SECRET_TOKEN: {SECRET_TOKEN[:3]}...")  # Логируем только начало токена
     main()
