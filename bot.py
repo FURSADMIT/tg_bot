@@ -19,7 +19,7 @@ TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 WEBHOOK_URL = os.getenv('WEBHOOK_URL', '').rstrip('/')
 SECRET_TOKEN = os.getenv('SECRET_TOKEN', 'default-secret-token')
 BOT_NAME = "@QaPollsBot"
-VK_LINK = "https://m.vk.com/id119459855"  # Ваша ссылка на ВКонтакте
+VK_LINK = "https://m.vk.com/id119459855"
 
 # Настройка логирования
 logging.basicConfig(
@@ -29,7 +29,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Состояния разговора
-QUESTIONS = 0
+QUESTIONS = 1
 
 # Вопросы теста
 questions = [
@@ -46,13 +46,11 @@ markup = ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True)
 
 async def health(update: Update, context: CallbackContext) -> None:
     """Эндпоинт для проверки работоспособности"""
-    await update.message.reply_text(f"✅ {BOT_NAME} работает нормально!\n"
-                                 f"Режим: {'WEBHOOK' if WEBHOOK_URL else 'POLLING'}")
+    await update.message.reply_text(f"✅ {BOT_NAME} работает нормально!")
 
 async def log_all_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Логируем все входящие сообщения для диагностики"""
     logger.info(f"Received message: {update.message.text} (User: {update.effective_user.id})")
-    logger.debug(f"Full update: {update}")
 
 def keep_awake(app_url):
     """Функция для поддержания активности на Render"""
@@ -62,140 +60,143 @@ def keep_awake(app_url):
     while True:
         try:
             if app_url:
-                # Просто пингуем основной URL, не ожидая определенного ответа
+                # Просто пингуем основной URL
                 response = requests.get(app_url, timeout=10)
-                logger.info(f"Keep-alive: Pinged service (status {response.status_code})")
+                logger.info(f"Keep-alive: Ping status {response.status_code}")
             else:
-                logger.info("Keep-alive: WEBHOOK_URL not set, skipping")
+                logger.info("Keep-alive: WEBHOOK_URL not set")
         except Exception as e:
             logger.error(f"Keep-alive error: {str(e)}")
-        time.sleep(300)  # Уменьшаем интервал до 5 минут
+        time.sleep(300)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    user = update.message.from_user
-    logger.info(f"Command /start received from user {user.id}")
-    
-    # Очищаем предыдущие ответы и завершаем текущий опрос
-    context.user_data.clear()
-    
-    # Сбрасываем состояние
-    context.user_data['answers'] = []
-    context.user_data['current_index'] = 0
-    
-    await update.message.reply_text(
-        f"Привет, {user.first_name}! Я {BOT_NAME}, помогу определить твою предрасположенность к тестированию ПО.\n\n"
-        "Ответь на 5 вопросов по шкале от 1 до 5, где:\n"
-        "1 - совсем не обо мне\n"
-        "5 - это точно про меня\n\n"
-        "Первый вопрос:\n" + questions[0],
-        reply_markup=markup
-    )
-    return QUESTIONS
-
-async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    user = update.message.from_user
-    answer = update.message.text
-    logger.info(f"User {user.id} answer: {answer}")
-    
-    # Если получена команда /start во время опроса
-    if answer == "/start":
+    try:
+        user = update.message.from_user
+        logger.info(f"Command /start received from user {user.id}")
+        
+        # Очищаем предыдущие ответы
+        context.user_data.clear()
+        context.user_data['answers'] = []
+        context.user_data['current_question'] = 0
+        
         await update.message.reply_text(
-            "Завершите текущий тест или используйте /cancel для отмены",
+            f"Привет, {user.first_name}! Я {BOT_NAME}, помогу определить твою предрасположенность к тестированию ПО.\n\n"
+            "Ответь на 5 вопросов по шкале от 1 до 5, где:\n"
+            "1 - совсем не обо мне\n"
+            "5 - это точно про меня\n\n"
+            "Первый вопрос:\n" + questions[0],
             reply_markup=markup
         )
         return QUESTIONS
-    
-    # Проверка корректности ответа
-    if not answer.isdigit() or int(answer) < 1 or int(answer) > 5:
-        current_index = context.user_data.get('current_index', 0)
-        if current_index < len(questions):
-            await update.message.reply_text(
-                "Пожалуйста, выберите цифру от 1 до 5",
-                reply_markup=markup
-            )
-            await update.message.reply_text(questions[current_index], reply_markup=markup)
-        return QUESTIONS
-    
-    # Сохраняем ответ
-    answers = context.user_data.get('answers', [])
-    answers.append(int(answer))
-    context.user_data['answers'] = answers
-    context.user_data['current_index'] = len(answers)
-    
-    # Проверяем, все ли вопросы отвечены
-    if len(answers) < len(questions):
+    except Exception as e:
+        logger.error(f"Error in start command: {str(e)}")
+        await update.message.reply_text("⚠️ Произошла ошибка при запуске. Попробуйте снова.")
+        return ConversationHandler.END
+
+async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    try:
+        user = update.message.from_user
+        answer = update.message.text
+        logger.info(f"User {user.id} answer: {answer}")
+        
+        # Проверка корректности ответа
+        if not answer.isdigit() or int(answer) < 1 or int(answer) > 5:
+            current_index = context.user_data.get('current_question', 0)
+            if current_index < len(questions):
+                await update.message.reply_text(
+                    "Пожалуйста, выберите цифру от 1 до 5",
+                    reply_markup=markup
+                )
+                await update.message.reply_text(questions[current_index], reply_markup=markup)
+            return QUESTIONS
+        
+        # Сохраняем ответ
+        answers = context.user_data.get('answers', [])
+        answers.append(int(answer))
+        context.user_data['answers'] = answers
         next_index = len(answers)
-        await update.message.reply_text(questions[next_index], reply_markup=markup)
-        return QUESTIONS
-    
-    # Все вопросы отвечены - показываем результат
-    total = sum(answers)
-    result = "🔍 *Ваши результаты* 🔍\n\n"
-    
-    if total >= 20:
-        result += (
-            "🚀 *Отличные задатки для тестировщика!*\n\n"
-            "Твой результат показывает высокую предрасположенность к QA. "
-            "Чтобы превратить это в профессию:\n\n"
-            f"👉 Напиши мне в Telegram [@Dmitrii_Fursa8](https://t.me/Dmitrii_Fursa8)\n\n"
-            f"Подписывайся на меня в ВКонтакте: [Dmitrii Fursa]({VK_LINK})"
+        context.user_data['current_question'] = next_index
+        
+        # Проверяем, все ли вопросы отвечены
+        if next_index < len(questions):
+            await update.message.reply_text(questions[next_index], reply_markup=markup)
+            return QUESTIONS
+        
+        # Все вопросы отвечены - показываем результат
+        total = sum(answers)
+        result = "🔍 *Ваши результаты* 🔍\n\n"
+        
+        if total >= 20:
+            result += (
+                "🚀 *Отличные задатки для тестировщика!*\n\n"
+                "Твой результат показывает высокую предрасположенность к QA. "
+                "Чтобы превратить это в профессию:\n\n"
+                f"👉 Напиши мне в Telegram [@Dmitrii_Fursa8](https://t.me/Dmitrii_Fursa8)\n\n"
+                f"Подписывайся на меня в ВКонтакте: [Dmitrii Fursa]({VK_LINK})"
+            )
+        elif total >= 15:
+            result += (
+                "🌟 *Хороший потенциал!*\n\n"
+                "У тебя есть базовые качества тестировщика. "
+                "Чтобы развить их до профессионального уровня:\n\n"
+                f"👉 Напиши мне в Telegram [@Dmitrii_Fursa8](https://t.me/Dmitrii_Fursa8)\n"
+                f"👉 Подписывайся на меня в ВКонтакте: [Dmitrii Fursa]({VK_LINK})"
+            )
+        else:
+            result += (
+                "💡 *Тестирование ПО может быть не твоим основным призванием, но это не значит, что IT не для тебя!*\n\n"
+                "Если ты хочешь:\n"
+                "• Стать тестировщиком и войти в IT\n"
+                "• Получить востребованную профессию\n"
+                "• Освоить навыки, которые откроют двери в мир технологий\n\n"
+                f"👉 Напиши мне в Telegram: [@Dmitrii_Fursa8](https://t.me/Dmitrii_Fursa8)\n"
+                f"👉 Подписывайся на меня в ВКонтакте: [Dmitrii Fursa]({VK_LINK})\n\n"
+                "Я помогу тебе начать карьеру в IT, даже если сейчас кажется, что это не твое!"
+            )
+        
+        await update.message.reply_text(
+            result,
+            parse_mode="Markdown",
+            disable_web_page_preview=True,
+            reply_markup=ReplyKeyboardRemove()
         )
-    elif total >= 15:
-        result += (
-            "🌟 *Хороший потенциал!*\n\n"
-            "У тебя есть базовые качества тестировщика. "
-            "Чтобы развить их до профессионального уровня:\n\n"
-            f"👉 Напиши мне в Telegram [@Dmitrii_Fursa8](https://t.me/Dmitrii_Fursa8)\n"
-            f"👉 Подписывайся на меня в ВКонтакте: [Dmitrii Fursa]({VK_LINK})"
+        
+        # Кнопка для повторного прохождения
+        await update.message.reply_text(
+            "Хотите пройти тест еще раз? Используйте команду /start",
+            reply_markup=ReplyKeyboardMarkup([["/start"]], one_time_keyboard=True)
         )
-    else:
-        result += (
-            "💡 *Тестирование ПО может быть не твоим основным призванием, но это не значит, что IT не для тебя!*\n\n"
-            "Если ты хочешь:\n"
-            "• Стать тестировщиком и войти в IT\n"
-            "• Получить востребованную профессию\n"
-            "• Освоить навыки, которые откроют двери в мир технологий\n\n"
-            f"👉 Напиши мне в Telegram: [@Dmitrii_Fursa8](https://t.me/Dmitrii_Fursa8)\n"
-            f"👉 Подписывайся на меня в ВКонтакте: [Dmitrii Fursa]({VK_LINK})\n\n"
-            "Я помогу тебе начать карьеру в IT, даже если сейчас кажется, что это не твое!"
-        )
-    
-    await update.message.reply_text(
-        result,
-        parse_mode="Markdown",
-        disable_web_page_preview=True,
-        reply_markup=ReplyKeyboardRemove()
-    )
-    
-    # Кнопка для повторного прохождения
-    await update.message.reply_text(
-        "Хотите пройти тест еще раз? Используйте команду /start",
-        reply_markup=ReplyKeyboardMarkup([["/start"]], one_time_keyboard=True)
-    )
-    
-    logger.info(f"Test completed for user {user.id}. Score: {total}")
-    return ConversationHandler.END
+        
+        logger.info(f"Test completed for user {user.id}. Score: {total}")
+        return ConversationHandler.END
+    except Exception as e:
+        logger.error(f"Error handling answer: {str(e)}")
+        await update.message.reply_text("⚠️ Произошла ошибка. Попробуйте начать заново командой /start")
+        return ConversationHandler.END
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    user = update.message.from_user
-    await update.message.reply_text("Тест отменен", reply_markup=ReplyKeyboardRemove())
-    logger.info(f"Test canceled by user {user.id}")
-    return ConversationHandler.END
+    try:
+        user = update.message.from_user
+        await update.message.reply_text("Тест отменен", reply_markup=ReplyKeyboardRemove())
+        logger.info(f"Test canceled by user {user.id}")
+        return ConversationHandler.END
+    except Exception as e:
+        logger.error(f"Error in cancel command: {str(e)}")
+        return ConversationHandler.END
 
-async def handle_start_during_conversation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Обработка команды /start во время активного опроса"""
+async def handle_unknown_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработка неизвестных команд"""
     user = update.message.from_user
-    logger.warning(f"User {user.id} tried to start new conversation during active test")
+    logger.warning(f"User {user.id} sent unknown command: {update.message.text}")
     await update.message.reply_text(
-        "⚠️ Сначала завершите текущий тест или используйте /cancel для отмены",
-        reply_markup=ReplyKeyboardRemove()
+        "Я не понимаю эту команду. Используйте /start для начала теста или /cancel для отмены."
     )
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Обработчик ошибок для всего приложения"""
     logger.error("Exception while handling an update:", exc_info=context.error)
     
-    # Попробуем уведомить пользователя об ошибке
+    # Уведомляем пользователя об ошибке
     try:
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
@@ -215,32 +216,18 @@ def main() -> None:
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
         states={
-            QUESTIONS: [
-                MessageHandler(
-                    filters.TEXT & ~filters.COMMAND,
-                    handle_answer
-                ),
-                # Обработка команды /start во время опроса
-                CommandHandler(
-                    "start",
-                    handle_start_during_conversation
-                ),
-                CommandHandler("cancel", cancel)
-            ]
+            QUESTIONS: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_answer)]
         },
         fallbacks=[CommandHandler("cancel", cancel)],
         allow_reentry=True
     )
+    
+    # Регистрируем обработчики
     application.add_handler(conv_handler)
-    
-    # Дополнительный обработчик для команды /start (вне ConversationHandler)
-    application.add_handler(CommandHandler("start", start))
-    
-    # Обработчик для health
     application.add_handler(CommandHandler("health", health))
-    
-    # Обработчик для логгирования
-    application.add_handler(MessageHandler(filters.ALL, log_all_messages))
+    application.add_handler(CommandHandler("cancel", cancel))
+    application.add_handler(MessageHandler(filters.COMMAND, handle_unknown_command))
+    application.add_handler(MessageHandler(filters.TEXT, log_all_messages))
     
     # Определяем порт для Render
     port = int(os.environ.get("PORT", 10000))
@@ -255,6 +242,7 @@ def main() -> None:
             daemon=True
         ).start()
         
+        # Запускаем бота в режиме webhook
         application.run_webhook(
             listen="0.0.0.0",
             port=port,
