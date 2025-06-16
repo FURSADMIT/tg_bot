@@ -48,22 +48,24 @@ async def health(update: Update, context: CallbackContext) -> None:
     await update.message.reply_text(f"✅ {BOT_NAME} работает нормально!\n"
                                  f"Режим: {'WEBHOOK' if WEBHOOK_URL else 'POLLING'}")
 
-def keep_awake():
+def keep_awake(app_url):
     """Функция для поддержания активности на Render"""
     # Дадим приложению время запуститься перед первым пингом
-    time.sleep(10)
+    time.sleep(15)
+    
+    logger.info("Starting keep-alive service")
     
     while True:
         try:
-            if WEBHOOK_URL:
+            if app_url:
                 # Используем базовый URL без /health для пинга
-                base_url = WEBHOOK_URL
-                response = requests.get(base_url, timeout=5)
-                logger.info(f"Keep-alive ping to {base_url}, status: {response.status_code}")
+                response = requests.get(app_url, timeout=5)
+                logger.info(f"Keep-alive ping to {app_url}, status: {response.status_code}")
         except Exception as e:
             logger.error(f"Keep-alive error: {str(e)}")
-        # Увеличим интервал до 10 минут
-        threading.Event().wait(600)
+        
+        # Увеличим интервал до 10 минут (600 секунд)
+        time.sleep(600)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user = update.message.from_user
@@ -153,20 +155,25 @@ def main() -> None:
     
     application.add_handler(conv_handler)
     
-    # Запуск функции поддержания активности
-    threading.Thread(target=keep_awake, daemon=True).start()
-    
     # Определяем порт для Render
     port = int(os.environ.get("PORT", 10000))
     
     if WEBHOOK_URL:
         logger.info(f"Starting bot in WEBHOOK mode on port {port}")
+        
+        # Запускаем keep-alive в отдельном потоке
+        threading.Thread(
+            target=keep_awake,
+            args=(WEBHOOK_URL,),
+            daemon=True
+        ).start()
+        
         application.run_webhook(
             listen="0.0.0.0",
             port=port,
             webhook_url=WEBHOOK_URL,
             secret_token=SECRET_TOKEN,
-            drop_pending_updates=True  # Игнорировать обновления, пропущенные во время простоя
+            drop_pending_updates=True
         )
     else:
         logger.info("Starting bot in POLLING mode")
