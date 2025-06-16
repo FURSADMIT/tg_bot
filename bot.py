@@ -56,11 +56,13 @@ def keep_awake(app_url):
     """Функция для поддержания активности на Render"""
     time.sleep(15)
     logger.info("Starting keep-alive service")
+    health_url = f"{app_url}/health"
     
     while True:
         try:
             if app_url:
-                response = requests.get(app_url + "/health", timeout=10)
+                # Проверяем доступность через эндпоинт /health
+                response = requests.get(health_url, timeout=10)
                 if response.status_code == 200:
                     logger.info(f"Keep-alive: Service is alive (status {response.status_code})")
                 else:
@@ -75,10 +77,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user = update.message.from_user
     logger.info(f"Command /start received from user {user.id}")
     
-    # Очищаем предыдущие ответы и устанавливаем индекс текущего вопроса
+    # Очищаем предыдущие ответы
     context.user_data.clear()
-    context.user_data['answers'] = []
-    context.user_data['current_question'] = 0
     
     await update.message.reply_text(
         f"Привет, {user.first_name}! Я {BOT_NAME}, помогу определить твою предрасположенность к тестированию ПО.\n\n"
@@ -91,40 +91,27 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     return QUESTIONS
 
 async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    user = update.message.from_user
     answer = update.message.text
-    logger.info(f"User {user.id} answer: {answer}")
+    logger.info(f"User answer: {answer}")
     
-    # Проверяем корректность ответа
     if not answer.isdigit() or int(answer) < 1 or int(answer) > 5:
-        current_question = context.user_data.get('current_question', 0)
-        await update.message.reply_text(
-            "Пожалуйста, выберите цифру от 1 до 5",
-            reply_markup=markup
-        )
-        # Повторно задаем текущий вопрос
-        await update.message.reply_text(questions[current_question], reply_markup=markup)
+        await update.message.reply_text("Пожалуйста, выберите цифру от 1 до 5", reply_markup=markup)
         return QUESTIONS
     
-    # Сохраняем ответ и переходим к следующему вопросу
-    current_question = context.user_data.get('current_question', 0)
-    context.user_data['answers'].append(int(answer))
-    context.user_data['current_question'] = current_question + 1
-    next_question_index = current_question + 1
+    # Сохраняем все ответы
+    answers = context.user_data.get('answers', [])
+    answers.append(int(answer))
+    context.user_data['answers'] = answers
+    question_index = len(answers)
     
-    logger.info(f"User {user.id} answers: {context.user_data['answers']}")
-    
-    if next_question_index < len(questions):
-        await update.message.reply_text(questions[next_question_index], reply_markup=markup)
+    if question_index < len(questions):
+        await update.message.reply_text(questions[question_index], reply_markup=markup)
         return QUESTIONS
     
     # Все вопросы отвечены - показываем результат
-    total = sum(context.user_data['answers'])
-    logger.info(f"Test completed for user {user.id}. Score: {total}")
-    
+    total = sum(answers)
     result = "🔍 *Ваши результаты* 🔍\n\n"
     
-    # Обновленные условия оценки
     if total >= 20:
         result += (
             "🚀 *Отличные задатки для тестировщика!*\n\n"
@@ -160,27 +147,21 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     
     # Кнопка для повторного прохождения
     await update.message.reply_text(
-        "Хотите пройти тест еще раз? Используйте команду /start",
+        "Хотите пройти тест еще раз?",
         reply_markup=ReplyKeyboardMarkup([["/start"]], one_time_keyboard=True)
     )
     
+    logger.info(f"Test completed. Score: {total}")
     return ConversationHandler.END
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    user = update.message.from_user
     await update.message.reply_text("Тест отменен", reply_markup=ReplyKeyboardRemove())
-    logger.info(f"Test canceled by user {user.id}")
+    logger.info("Test canceled")
     return ConversationHandler.END
 
 def main() -> None:
     # Создаем Application
     application = Application.builder().token(TOKEN).build()
-    
-    # Явная регистрация обработчиков
-    application.add_handler(CommandHandler("health", health))
-    
-    # Обработчик для логгирования всех сообщений
-    application.add_handler(MessageHandler(filters.ALL, log_all_messages))
     
     # Настройка ConversationHandler
     conv_handler = ConversationHandler(
@@ -188,10 +169,15 @@ def main() -> None:
         states={
             QUESTIONS: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_answer)]
         },
-        fallbacks=[CommandHandler("cancel", cancel)],
-        allow_reentry=True
+        fallbacks=[CommandHandler("cancel", cancel)]
     )
     application.add_handler(conv_handler)
+    
+    # Обработчик для health
+    application.add_handler(CommandHandler("health", health))
+    
+    # Обработчик для логгирования
+    application.add_handler(MessageHandler(filters.ALL, log_all_messages))
     
     # Определяем порт для Render
     port = int(os.environ.get("PORT", 10000))
@@ -205,12 +191,6 @@ def main() -> None:
             args=(WEBHOOK_URL,),
             daemon=True
         ).start()
-        
-        # Добавляем эндпоинт для keep-alive
-        async def health_endpoint(update, context):
-            await update.message.reply_text("OK")
-        
-        application.add_handler(CommandHandler("health", health_endpoint))
         
         application.run_webhook(
             listen="0.0.0.0",
@@ -226,4 +206,5 @@ def main() -> None:
 if __name__ == "__main__":
     logger.info(f"Starting {BOT_NAME}")
     logger.info(f"WEBHOOK_URL: {WEBHOOK_URL or 'Not set, using POLLING'}")
+    logger.info(f"SECRET_TOKEN: {SECRET_TOKEN[:3]}...")
     main()
