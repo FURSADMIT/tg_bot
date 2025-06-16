@@ -1,6 +1,3 @@
 python-telegram-bot[webhooks]==20.3
 python-dotenv==1.0.0
 requests==2.31.0
-httpx~=0.24.0  # Совместимая версия с python-telegram-bot 20.3
-certifi>=2023.11.17
-apscheduler==3.10.1
