@@ -52,6 +52,7 @@ async def health(update: Update, context: CallbackContext) -> None:
 async def log_all_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Логируем все входящие сообщения для диагностики"""
     logger.info(f"Received message: {update.message.text} (User: {update.effective_user.id})")
+    logger.debug(f"Full update: {update}")
 
 def keep_awake(app_url):
     """Функция для поддержания активности на Render"""
@@ -75,19 +76,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     logger.info(f"Command /start received from user {user.id}")
     
     # Очищаем предыдущие ответы и завершаем текущий опрос
-    if 'answers' in context.user_data:
-        context.user_data.clear()
-        logger.info(f"Cleared previous state for user {user.id}")
+    context.user_data.clear()
     
     # Сбрасываем состояние
-    if context.user_data.get('conversation_active', False):
-        await update.message.reply_text(
-            "Прерван предыдущий опрос. Начинаем новый тест.",
-            reply_markup=ReplyKeyboardRemove()
-        )
-    
     context.user_data['answers'] = []
-    context.user_data['conversation_active'] = True
+    context.user_data['current_index'] = 0
     
     await update.message.reply_text(
         f"Привет, {user.first_name}! Я {BOT_NAME}, помогу определить твою предрасположенность к тестированию ПО.\n\n"
@@ -114,7 +107,7 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     
     # Проверка корректности ответа
     if not answer.isdigit() or int(answer) < 1 or int(answer) > 5:
-        current_index = len(context.user_data.get('answers', []))
+        current_index = context.user_data.get('current_index', 0)
         if current_index < len(questions):
             await update.message.reply_text(
                 "Пожалуйста, выберите цифру от 1 до 5",
@@ -124,9 +117,10 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         return QUESTIONS
     
     # Сохраняем ответ
-    context.user_data['answers'].append(int(answer))
-    answers = context.user_data['answers']
-    logger.info(f"User {user.id} answers: {answers}")
+    answers = context.user_data.get('answers', [])
+    answers.append(int(answer))
+    context.user_data['answers'] = answers
+    context.user_data['current_index'] = len(answers)
     
     # Проверяем, все ли вопросы отвечены
     if len(answers) < len(questions):
@@ -179,20 +173,12 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         reply_markup=ReplyKeyboardMarkup([["/start"]], one_time_keyboard=True)
     )
     
-    # Сбрасываем состояние
-    context.user_data['conversation_active'] = False
     logger.info(f"Test completed for user {user.id}. Score: {total}")
     return ConversationHandler.END
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user = update.message.from_user
     await update.message.reply_text("Тест отменен", reply_markup=ReplyKeyboardRemove())
-    
-    # Сбрасываем состояние
-    if 'conversation_active' in context.user_data:
-        context.user_data['conversation_active'] = False
-        context.user_data.pop('answers', None)
-    
     logger.info(f"Test canceled by user {user.id}")
     return ConversationHandler.END
 
@@ -238,13 +224,17 @@ def main() -> None:
                 CommandHandler(
                     "start",
                     handle_start_during_conversation
-                )
+                ),
+                CommandHandler("cancel", cancel)
             ]
         },
         fallbacks=[CommandHandler("cancel", cancel)],
         allow_reentry=True
     )
     application.add_handler(conv_handler)
+    
+    # Дополнительный обработчик для команды /start (вне ConversationHandler)
+    application.add_handler(CommandHandler("start", start))
     
     # Обработчик для health
     application.add_handler(CommandHandler("health", health))
