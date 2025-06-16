@@ -1,6 +1,5 @@
 import os
 import logging
-import requests
 from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
 from telegram.ext import (
     Application,
@@ -13,6 +12,9 @@ from telegram.ext import (
 
 # Конфигурация
 TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
+PORT = int(os.environ.get('PORT', 10000))
+WEBHOOK_URL = os.getenv('WEBHOOK_URL')  # Полный URL вашего приложения на Render
+SECRET_TOKEN = os.getenv('SECRET_TOKEN', 'your-secret-token')
 BOT_NAME = "@QaPollsBot"
 
 # Настройка логирования
@@ -152,11 +154,21 @@ def main() -> None:
     # Регистрируем обработчики
     application.add_handler(conv_handler)
     
-    # Запускаем бота в режиме polling
-    logger.info("Starting bot in POLLING mode")
-    application.run_polling()
+    # Используем Webhook вместо Polling
+    logger.info("Starting bot in WEBHOOK mode")
+    
+    # Установка webhook
+    application.run_webhook(
+        listen="0.0.0.0",
+        port=PORT,
+        webhook_url=f"{WEBHOOK_URL}/{SECRET_TOKEN}",
+        secret_token=SECRET_TOKEN,
+        drop_pending_updates=True
+    )
 
 if __name__ == "__main__":
     logger.info(f"Starting {BOT_NAME}")
     logger.info(f"TOKEN: {TOKEN[:5]}...{TOKEN[-5:]}")
+    logger.info(f"WEBHOOK_URL: {WEBHOOK_URL}")
+    logger.info(f"PORT: {PORT}")
     main()
