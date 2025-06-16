@@ -19,6 +19,7 @@ TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 WEBHOOK_URL = os.getenv('WEBHOOK_URL', '').rstrip('/')
 SECRET_TOKEN = os.getenv('SECRET_TOKEN', 'default-secret-token')
 BOT_NAME = "@QaPollsBot"
+VK_LINK = "https://m.vk.com/id119459855"  # Ваша ссылка на ВКонтакте
 
 # Настройка логирования
 logging.basicConfig(
@@ -145,15 +146,16 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
             "🚀 *Отличные задатки для тестировщика!*\n\n"
             "Твой результат показывает высокую предрасположенность к QA. "
             "Чтобы превратить это в профессию:\n\n"
-            "👉 Напиши мне в Telegram [@Dmitrii_Fursa8](https://t.me/Dmitrii_Fursa8)\n\n"
-            "Подписывайся на мой канал: [QA Mentor](https://t.me/qa_mentor)"
+            f"👉 Напиши мне в Telegram [@Dmitrii_Fursa8](https://t.me/Dmitrii_Fursa8)\n\n"
+            f"Подписывайся на меня в ВКонтакте: [Dmitrii Fursa]({VK_LINK})"
         )
     elif total >= 15:
         result += (
             "🌟 *Хороший потенциал!*\n\n"
             "У тебя есть базовые качества тестировщика. "
             "Чтобы развить их до профессионального уровня:\n\n"
-            "👉 Напиши мне в Telegram [@Dmitrii_Fursa8](https://t.me/Dmitrii_Fursa8)"
+            f"👉 Напиши мне в Telegram [@Dmitrii_Fursa8](https://t.me/Dmitrii_Fursa8)\n"
+            f"👉 Подписывайся на меня в ВКонтакте: [Dmitrii Fursa]({VK_LINK})"
         )
     else:
         result += (
@@ -162,7 +164,8 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
             "• Стать тестировщиком и войти в IT\n"
             "• Получить востребованную профессию\n"
             "• Освоить навыки, которые откроют двери в мир технологий\n\n"
-            "👉 Пиши мне прямо сейчас: [@Dmitrii_Fursa8](https://t.me/Dmitrii_Fursa8)\n"
+            f"👉 Напиши мне в Telegram: [@Dmitrii_Fursa8](https://t.me/Dmitrii_Fursa8)\n"
+            f"👉 Подписывайся на меня в ВКонтакте: [Dmitrii Fursa]({VK_LINK})\n\n"
             "Я помогу тебе начать карьеру в IT, даже если сейчас кажется, что это не твое!"
         )
     
@@ -264,4 +267,5 @@ if __name__ == "__main__":
     logger.info(f"Starting {BOT_NAME}")
     logger.info(f"WEBHOOK_URL: {WEBHOOK_URL or 'Not set, using POLLING'}")
     logger.info(f"SECRET_TOKEN: {SECRET_TOKEN[:3]}...")
+    logger.info(f"VK_LINK: {VK_LINK}")
     main()
