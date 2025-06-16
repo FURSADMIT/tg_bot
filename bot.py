@@ -57,21 +57,18 @@ def keep_awake(app_url):
     """Функция для поддержания активности на Render"""
     time.sleep(15)
     logger.info("Starting keep-alive service")
-    health_url = f"{app_url}/health"
     
     while True:
         try:
             if app_url:
-                response = requests.get(health_url, timeout=10)
-                if response.status_code == 200:
-                    logger.info(f"Keep-alive: Service is alive (status {response.status_code})")
-                else:
-                    logger.warning(f"Unexpected status: {response.status_code}")
+                # Просто пингуем основной URL, не ожидая определенного ответа
+                response = requests.get(app_url, timeout=10)
+                logger.info(f"Keep-alive: Pinged service (status {response.status_code})")
             else:
                 logger.info("Keep-alive: WEBHOOK_URL not set, skipping")
         except Exception as e:
             logger.error(f"Keep-alive error: {str(e)}")
-        time.sleep(600)
+        time.sleep(300)  # Уменьшаем интервал до 5 минут
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user = update.message.from_user
@@ -208,9 +205,25 @@ async def handle_start_during_conversation(update: Update, context: ContextTypes
         reply_markup=ReplyKeyboardRemove()
     )
 
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Обработчик ошибок для всего приложения"""
+    logger.error("Exception while handling an update:", exc_info=context.error)
+    
+    # Попробуем уведомить пользователя об ошибке
+    try:
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text="😢 Произошла непредвиденная ошибка. Пожалуйста, попробуйте снова."
+        )
+    except Exception:
+        logger.error("Failed to send error notification to user")
+
 def main() -> None:
     # Создаем Application
     application = Application.builder().token(TOKEN).build()
+    
+    # Добавляем глобальный обработчик ошибок
+    application.add_error_handler(error_handler)
     
     # Настройка ConversationHandler
     conv_handler = ConversationHandler(
