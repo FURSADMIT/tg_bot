@@ -16,7 +16,7 @@ from telegram.ext import (
 
 # Конфигурация
 TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
-WEBHOOK_URL = os.getenv('WEBHOOK_URL', '').rstrip('/')  # Удаляем слэш в конце
+WEBHOOK_URL = os.getenv('WEBHOOK_URL', '').rstrip('/')
 SECRET_TOKEN = os.getenv('SECRET_TOKEN', 'default-secret-token')
 BOT_NAME = "@QaPollsBot"
 
@@ -28,7 +28,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Состояния разговора
-QUESTIONS, NAME, EMAIL = range(3)
+QUESTIONS = 0  # Теперь только одно состояние - вопросы
 
 # Вопросы теста
 questions = [
@@ -50,26 +50,25 @@ async def health(update: Update, context: CallbackContext) -> None:
 
 def keep_awake(app_url):
     """Функция для поддержания активности на Render"""
-    # Дадим приложению время запуститься перед первым пингом
     time.sleep(15)
-    
     logger.info("Starting keep-alive service")
     
     while True:
         try:
             if app_url:
-                # Используем базовый URL без /health для пинга
                 response = requests.get(app_url, timeout=5)
                 logger.info(f"Keep-alive ping to {app_url}, status: {response.status_code}")
         except Exception as e:
             logger.error(f"Keep-alive error: {str(e)}")
-        
-        # Увеличим интервал до 10 минут (600 секунд)
         time.sleep(600)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user = update.message.from_user
     logger.info(f"User {user.id} started conversation")
+    
+    # Очищаем предыдущие ответы
+    context.user_data.clear()
+    
     await update.message.reply_text(
         f"Привет, {user.first_name}! Я {BOT_NAME}, помогу определить твою предрасположенность к тестированию ПО.\n\n"
         "Ответь на 5 вопросов по шкале от 1 до 5, где:\n"
@@ -93,33 +92,42 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         await update.message.reply_text(questions[question_index], reply_markup=markup)
         return QUESTIONS
     
-    await update.message.reply_text(
-        "Тест завершен! Введите ваше имя:",
-        reply_markup=ReplyKeyboardRemove()
-    )
-    return NAME
-
-async def get_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    context.user_data['name'] = update.message.text
-    await update.message.reply_text("Введите ваш email для получения результатов:")
-    return EMAIL
-
-async def get_email(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    email = update.message.text
-    context.user_data['email'] = email
-    
-    # Расчет результатов
+    # Все вопросы отвечены - показываем результат
     total = sum(context.user_data['answers'])
-    result = "🔍 Ваши результаты 🔍\n\n"
+    result = "🔍 *Ваши результаты* 🔍\n\n"
     
     if total >= 6:
-        result += "Отличные задатки для тестировщика! Рекомендуем пройти наш курс:\nhttps://example.com/course"
+        result += (
+            "🚀 *Отличные задатки для тестировщика!*\n\n"
+            "Твой результат показывает высокую предрасположенность к QA. "
+            "Чтобы превратить это в профессию:\n\n"
+            "👉 Напиши мне в Telegram [@Dmitrii_Fursa8](https://t.me/Dmitrii_Fursa8)\n\n"
+            "Подписывайся на мой канал: [QA Mentor](https://t.me/qa_mentor)"
+        )
     elif total == 5:
-        result += "Есть потенциал! Развивайте навыки внимательности."
+        result += (
+            "🌟 *Хороший потенциал!*\n\n"
+            "У тебя есть базовые качества тестировщика. "
+            "Чтобы развить их до профессионального уровня:\n\n"
+            "👉 Напиши мне в Telegram [@Dmitrii_Fursa8](https://t.me/Dmitrii_Fursa8)"
+        )
     else:
-        result += "Тестирование может не быть вашим призванием, но попробуйте наш вводный урок:\nhttps://example.com/trial"
+        result += (
+            "💡 *Тестирование ПО может быть не твоим основным призванием, но это не значит, что IT не для тебя!*\n\n"
+            "Если ты хочешь:\n"
+            "• Стать тестировщиком и войти в IT\n"
+            "• Получить востребованную профессию\n"
+            "• Освоить навыки, которые откроют двери в мир технологий\n\n"
+            "👉 Пиши мне прямо сейчас: [@Dmitrii_Fursa8](https://t.me/Dmitrii_Fursa8)\n"
+            "Я помогу тебе начать карьеру в IT, даже если сейчас кажется, что это не твое!"
+        )
     
-    await update.message.reply_text(result)
+    await update.message.reply_text(
+        result,
+        parse_mode="Markdown",
+        disable_web_page_preview=True,
+        reply_markup=ReplyKeyboardRemove()
+    )
     
     # Кнопка для повторного прохождения
     await update.message.reply_text(
@@ -127,7 +135,7 @@ async def get_email(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         reply_markup=ReplyKeyboardMarkup([["/start"]], one_time_keyboard=True)
     )
     
-    logger.info(f"User completed test: {context.user_data}")
+    logger.info(f"User completed test with score: {total}")
     return ConversationHandler.END
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -142,13 +150,11 @@ def main() -> None:
     # Добавляем health-эндпоинт
     application.add_handler(CommandHandler("health", health))
     
-    # Настройка ConversationHandler
+    # Настройка ConversationHandler (теперь только одно состояние)
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
         states={
-            QUESTIONS: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_answer)],
-            NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_name)],
-            EMAIL: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_email)]
+            QUESTIONS: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_answer)]
         },
         fallbacks=[CommandHandler("cancel", cancel)]
     )
@@ -161,7 +167,7 @@ def main() -> None:
     if WEBHOOK_URL:
         logger.info(f"Starting bot in WEBHOOK mode on port {port}")
         
-        # Запускаем keep-alive в отдельном потоке
+        # Запускаем keep-alive
         threading.Thread(
             target=keep_awake,
             args=(WEBHOOK_URL,),
