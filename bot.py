@@ -28,7 +28,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Состояния разговора
-QUESTIONS = 0  # Теперь только одно состояние - вопросы
+QUESTIONS = 0
 
 # Вопросы теста
 questions = [
@@ -56,8 +56,14 @@ def keep_awake(app_url):
     while True:
         try:
             if app_url:
-                response = requests.get(app_url, timeout=5)
-                logger.info(f"Keep-alive ping to {app_url}, status: {response.status_code}")
+                # Используем HEAD-запрос вместо GET
+                response = requests.head(app_url, timeout=5)
+                
+                # Принимаем 200, 405 и 404 как успешные ответы
+                if response.status_code in (200, 405, 404):
+                    logger.info(f"Keep-alive: Service is alive (status {response.status_code})")
+                else:
+                    logger.warning(f"Unexpected status: {response.status_code}")
         except Exception as e:
             logger.error(f"Keep-alive error: {str(e)}")
         time.sleep(600)
@@ -150,7 +156,7 @@ def main() -> None:
     # Добавляем health-эндпоинт
     application.add_handler(CommandHandler("health", health))
     
-    # Настройка ConversationHandler (теперь только одно состояние)
+    # Настройка ConversationHandler
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
         states={
