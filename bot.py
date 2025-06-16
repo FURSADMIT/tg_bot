@@ -1,5 +1,8 @@
 import os
 import logging
+import threading
+import requests
+import time
 from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
 from telegram.ext import (
     Application,
@@ -13,9 +16,10 @@ from telegram.ext import (
 # Конфигурация
 TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 PORT = int(os.environ.get('PORT', 10000))
-WEBHOOK_URL = os.getenv('WEBHOOK_URL')  # Полный URL вашего приложения на Render
-SECRET_TOKEN = os.getenv('SECRET_TOKEN', 'your-secret-token')
+WEBHOOK_URL = os.getenv('WEBHOOK_URL')
+SECRET_TOKEN = os.getenv('SECRET_TOKEN', 'default-secret-token')
 BOT_NAME = "@QaPollsBot"
+VK_LINK = "https://m.vk.com/id119459855"
 
 # Настройка логирования
 logging.basicConfig(
@@ -39,6 +43,29 @@ questions = [
 # Клавиатура для ответов
 reply_keyboard = [["1", "2", "3", "4", "5"]]
 markup = ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True)
+
+def keep_alive():
+    """Функция для поддержания активности приложения на Render"""
+    logger.info("Starting keep-alive service")
+    time.sleep(10)  # Даем время на запуск основного приложения
+    
+    while True:
+        try:
+            if WEBHOOK_URL:
+                health_url = f"{WEBHOOK_URL}/health"
+                response = requests.get(health_url, timeout=10)
+                logger.info(f"Keep-alive: Service pinged (status {response.status_code})")
+            else:
+                logger.info("Keep-alive: WEBHOOK_URL not set")
+        except Exception as e:
+            logger.error(f"Keep-alive error: {str(e)}")
+        
+        # Интервал 5 минут (300 секунд)
+        time.sleep(300)
+
+async def health(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Эндпоинт для проверки работоспособности"""
+    await update.message.reply_text(f"✅ {BOT_NAME} работает нормально!")
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     try:
@@ -99,15 +126,37 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         result = "🔍 *Ваши результаты* 🔍\n\n"
         
         if total >= 20:
-            result += "🚀 Отличные задатки для тестировщика!"
+            result += (
+                "🚀 *Отличные задатки для тестировщика!*\n\n"
+                "Твой результат показывает высокую предрасположенность к QA. "
+                "Чтобы превратить это в профессию:\n\n"
+                f"👉 Напиши мне в Telegram [@Dmitrii_Fursa8](https://t.me/Dmitrii_Fursa8)\n\n"
+                f"Подписывайся на меня в ВКонтакте: [Dmitrii Fursa]({VK_LINK})"
+            )
         elif total >= 15:
-            result += "🌟 Хороший потенциал!"
+            result += (
+                "🌟 *Хороший потенциал!*\n\n"
+                "У тебя есть базовые качества тестировщика. "
+                "Чтобы развить их до профессионального уровня:\n\n"
+                f"👉 Напиши мне в Telegram [@Dmitrii_Fursa8](https://t.me/Dmitrii_Fursa8)\n"
+                f"👉 Подписывайся на меня в ВКонтакте: [Dmitrii Fursa]({VK_LINK})"
+            )
         else:
-            result += "💡 Тестирование ПО может быть не твоим основным призванием, но IT - для всех!"
+            result += (
+                "💡 *Тестирование ПО может быть не твоим основным призванием, но это не значит, что IT не для тебя!*\n\n"
+                "Если ты хочешь:\n"
+                "• Стать тестировщиком и войти в IT\n"
+                "• Получить востребованную профессию\n"
+                "• Освоить навыки, которые откроют двери в мир технологий\n\n"
+                f"👉 Напиши мне в Telegram: [@Dmitrii_Fursa8](https://t.me/Dmitrii_Fursa8)\n"
+                f"👉 Подписывайся на меня в ВКонтакте: [Dmitrii Fursa]({VK_LINK})\n\n"
+                "Я помогу тебе начать карьеру в IT, даже если сейчас кажется, что это не твое!"
+            )
         
         await update.message.reply_text(
             result,
             parse_mode="Markdown",
+            disable_web_page_preview=True,
             reply_markup=ReplyKeyboardRemove()
         )
         
@@ -134,6 +183,16 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Обработчик ошибок для всего приложения"""
     logger.error("Exception while handling an update:", exc_info=context.error)
+    
+    # Уведомляем пользователя об ошибке
+    if update and update.effective_message:
+        try:
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text="😢 Произошла непредвиденная ошибка. Пожалуйста, попробуйте снова."
+            )
+        except Exception:
+            logger.error("Failed to send error notification to user")
 
 def main() -> None:
     # Создаем Application
@@ -153,22 +212,34 @@ def main() -> None:
     
     # Регистрируем обработчики
     application.add_handler(conv_handler)
+    application.add_handler(CommandHandler("health", health))
     
-    # Используем Webhook вместо Polling
-    logger.info("Starting bot in WEBHOOK mode")
+    # Запускаем keep-alive в отдельном потоке
+    if WEBHOOK_URL:
+        threading.Thread(target=keep_alive, daemon=True).start()
+        logger.info(f"Starting keep-alive service for {WEBHOOK_URL}")
     
-    # Установка webhook
-    application.run_webhook(
-        listen="0.0.0.0",
-        port=PORT,
-        webhook_url=f"{WEBHOOK_URL}/{SECRET_TOKEN}",
-        secret_token=SECRET_TOKEN,
-        drop_pending_updates=True
-    )
+    # Используем Webhook
+    if WEBHOOK_URL:
+        logger.info(f"Starting bot in WEBHOOK mode on port {PORT}")
+        
+        # Установка webhook
+        application.run_webhook(
+            listen="0.0.0.0",
+            port=PORT,
+            webhook_url=WEBHOOK_URL,
+            secret_token=SECRET_TOKEN,
+            drop_pending_updates=True
+        )
+    else:
+        logger.info("Starting bot in POLLING mode")
+        application.run_polling()
 
 if __name__ == "__main__":
     logger.info(f"Starting {BOT_NAME}")
     logger.info(f"TOKEN: {TOKEN[:5]}...{TOKEN[-5:]}")
     logger.info(f"WEBHOOK_URL: {WEBHOOK_URL}")
     logger.info(f"PORT: {PORT}")
+    logger.info(f"SECRET_TOKEN: {SECRET_TOKEN[:3]}...")
+    
     main()
