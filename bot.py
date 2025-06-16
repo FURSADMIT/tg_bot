@@ -61,7 +61,6 @@ def keep_awake(app_url):
     while True:
         try:
             if app_url:
-                # Проверяем доступность через эндпоинт /health
                 response = requests.get(health_url, timeout=10)
                 if response.status_code == 200:
                     logger.info(f"Keep-alive: Service is alive (status {response.status_code})")
@@ -77,8 +76,20 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user = update.message.from_user
     logger.info(f"Command /start received from user {user.id}")
     
-    # Очищаем предыдущие ответы
-    context.user_data.clear()
+    # Очищаем предыдущие ответы и завершаем текущий опрос
+    if 'answers' in context.user_data:
+        context.user_data.clear()
+        logger.info(f"Cleared previous state for user {user.id}")
+    
+    # Сбрасываем состояние
+    if context.user_data.get('conversation_active', False):
+        await update.message.reply_text(
+            "Прерван предыдущий опрос. Начинаем новый тест.",
+            reply_markup=ReplyKeyboardRemove()
+        )
+    
+    context.user_data['answers'] = []
+    context.user_data['conversation_active'] = True
     
     await update.message.reply_text(
         f"Привет, {user.first_name}! Я {BOT_NAME}, помогу определить твою предрасположенность к тестированию ПО.\n\n"
@@ -91,21 +102,38 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     return QUESTIONS
 
 async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    user = update.message.from_user
     answer = update.message.text
-    logger.info(f"User answer: {answer}")
+    logger.info(f"User {user.id} answer: {answer}")
     
-    if not answer.isdigit() or int(answer) < 1 or int(answer) > 5:
-        await update.message.reply_text("Пожалуйста, выберите цифру от 1 до 5", reply_markup=markup)
+    # Если получена команда /start во время опроса
+    if answer == "/start":
+        await update.message.reply_text(
+            "Завершите текущий тест или используйте /cancel для отмены",
+            reply_markup=markup
+        )
         return QUESTIONS
     
-    # Сохраняем все ответы
-    answers = context.user_data.get('answers', [])
-    answers.append(int(answer))
-    context.user_data['answers'] = answers
-    question_index = len(answers)
+    # Проверка корректности ответа
+    if not answer.isdigit() or int(answer) < 1 or int(answer) > 5:
+        current_index = len(context.user_data.get('answers', []))
+        if current_index < len(questions):
+            await update.message.reply_text(
+                "Пожалуйста, выберите цифру от 1 до 5",
+                reply_markup=markup
+            )
+            await update.message.reply_text(questions[current_index], reply_markup=markup)
+        return QUESTIONS
     
-    if question_index < len(questions):
-        await update.message.reply_text(questions[question_index], reply_markup=markup)
+    # Сохраняем ответ
+    context.user_data['answers'].append(int(answer))
+    answers = context.user_data['answers']
+    logger.info(f"User {user.id} answers: {answers}")
+    
+    # Проверяем, все ли вопросы отвечены
+    if len(answers) < len(questions):
+        next_index = len(answers)
+        await update.message.reply_text(questions[next_index], reply_markup=markup)
         return QUESTIONS
     
     # Все вопросы отвечены - показываем результат
@@ -147,17 +175,35 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     
     # Кнопка для повторного прохождения
     await update.message.reply_text(
-        "Хотите пройти тест еще раз?",
+        "Хотите пройти тест еще раз? Используйте команду /start",
         reply_markup=ReplyKeyboardMarkup([["/start"]], one_time_keyboard=True)
     )
     
-    logger.info(f"Test completed. Score: {total}")
+    # Сбрасываем состояние
+    context.user_data['conversation_active'] = False
+    logger.info(f"Test completed for user {user.id}. Score: {total}")
     return ConversationHandler.END
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    user = update.message.from_user
     await update.message.reply_text("Тест отменен", reply_markup=ReplyKeyboardRemove())
-    logger.info("Test canceled")
+    
+    # Сбрасываем состояние
+    if 'conversation_active' in context.user_data:
+        context.user_data['conversation_active'] = False
+        context.user_data.pop('answers', None)
+    
+    logger.info(f"Test canceled by user {user.id}")
     return ConversationHandler.END
+
+async def handle_start_during_conversation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Обработка команды /start во время активного опроса"""
+    user = update.message.from_user
+    logger.warning(f"User {user.id} tried to start new conversation during active test")
+    await update.message.reply_text(
+        "⚠️ Сначала завершите текущий тест или используйте /cancel для отмены",
+        reply_markup=ReplyKeyboardRemove()
+    )
 
 def main() -> None:
     # Создаем Application
@@ -167,9 +213,20 @@ def main() -> None:
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
         states={
-            QUESTIONS: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_answer)]
+            QUESTIONS: [
+                MessageHandler(
+                    filters.TEXT & ~filters.COMMAND,
+                    handle_answer
+                ),
+                # Обработка команды /start во время опроса
+                CommandHandler(
+                    "start",
+                    handle_start_during_conversation
+                )
+            ]
         },
-        fallbacks=[CommandHandler("cancel", cancel)]
+        fallbacks=[CommandHandler("cancel", cancel)],
+        allow_reentry=True
     )
     application.add_handler(conv_handler)
     
