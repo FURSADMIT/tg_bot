@@ -3,6 +3,7 @@ import logging
 import threading
 import requests
 import time
+from flask import Flask, jsonify
 from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
 from telegram.ext import (
     Application,
@@ -19,6 +20,7 @@ PORT = int(os.environ.get('PORT', 10000))
 WEBHOOK_URL = os.getenv('WEBHOOK_URL')
 SECRET_TOKEN = os.getenv('SECRET_TOKEN', 'default-secret-token')
 BOT_NAME = "@QaPollsBot"
+TG_LINK = "https://t.me/Dmitrii_Fursa8"
 VK_LINK = "https://m.vk.com/id119459855"
 
 # Настройка логирования
@@ -27,6 +29,19 @@ logging.basicConfig(
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
+
+# Создаем Flask приложение для обработки HTTP-запросов
+http_app = Flask(__name__)
+
+@http_app.route('/health')
+def http_health():
+    """HTTP эндпоинт для проверки работоспособности"""
+    return jsonify({"status": "ok", "bot": BOT_NAME}), 200
+
+@http_app.route('/')
+def home():
+    """Корневой эндпоинт"""
+    return jsonify({"message": "QA Polls Bot is running"}), 200
 
 # Состояния разговора
 QUESTIONS = 1
@@ -45,16 +60,16 @@ reply_keyboard = [["1", "2", "3", "4", "5"]]
 markup = ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True)
 
 def keep_alive():
-    """Функция для поддержания активности приложения на Render"""
+    """Функция для поддержания активности приложения"""
+    time.sleep(15)  # Даем время на запуск основного приложения
     logger.info("Starting keep-alive service")
-    time.sleep(10)  # Даем время на запуск основного приложения
     
     while True:
         try:
             if WEBHOOK_URL:
                 health_url = f"{WEBHOOK_URL}/health"
                 response = requests.get(health_url, timeout=10)
-                logger.info(f"Keep-alive: Service pinged (status {response.status_code})")
+                logger.info(f"Keep-alive: Service status {response.status_code}")
             else:
                 logger.info("Keep-alive: WEBHOOK_URL not set")
         except Exception as e:
@@ -63,8 +78,8 @@ def keep_alive():
         # Интервал 5 минут (300 секунд)
         time.sleep(300)
 
-async def health(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Эндпоинт для проверки работоспособности"""
+async def telegram_health(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Telegram команда для проверки работоспособности"""
     await update.message.reply_text(f"✅ {BOT_NAME} работает нормально!")
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -130,15 +145,15 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
                 "🚀 *Отличные задатки для тестировщика!*\n\n"
                 "Твой результат показывает высокую предрасположенность к QA. "
                 "Чтобы превратить это в профессию:\n\n"
-                f"👉 Напиши мне в Telegram [@Dmitrii_Fursa8](https://t.me/Dmitrii_Fursa8)\n\n"
-                f"Подписывайся на меня в ВКонтакте: [Dmitrii Fursa]({VK_LINK})"
+                f"👉 Напиши мне в Telegram: [@Dmitrii_Fursa8]({TG_LINK})\n"
+                f"👉 Подписывайся на меня в ВКонтакте: [Dmitrii Fursa]({VK_LINK})"
             )
         elif total >= 15:
             result += (
                 "🌟 *Хороший потенциал!*\n\n"
                 "У тебя есть базовые качества тестировщика. "
                 "Чтобы развить их до профессионального уровня:\n\n"
-                f"👉 Напиши мне в Telegram [@Dmitrii_Fursa8](https://t.me/Dmitrii_Fursa8)\n"
+                f"👉 Напиши мне в Telegram: [@Dmitrii_Fursa8]({TG_LINK})\n"
                 f"👉 Подписывайся на меня в ВКонтакте: [Dmitrii Fursa]({VK_LINK})"
             )
         else:
@@ -148,9 +163,8 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
                 "• Стать тестировщиком и войти в IT\n"
                 "• Получить востребованную профессию\n"
                 "• Освоить навыки, которые откроют двери в мир технологий\n\n"
-                f"👉 Напиши мне в Telegram: [@Dmitrii_Fursa8](https://t.me/Dmitrii_Fursa8)\n"
-                f"👉 Подписывайся на меня в ВКонтакте: [Dmitrii Fursa]({VK_LINK})\n\n"
-                "Я помогу тебе начать карьеру в IT, даже если сейчас кажется, что это не твое!"
+                f"👉 Пиши мне в Telegram: [@Dmitrii_Fursa8]({TG_LINK})\n"
+                f"👉 Подписывайся на меня в ВКонтакте: [Dmitrii Fursa]({VK_LINK})"
             )
         
         await update.message.reply_text(
@@ -181,8 +195,8 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         return ConversationHandler.END
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Обработчик ошибок для всего приложения"""
-    logger.error("Exception while handling an update:", exc_info=context.error)
+    """Обработчик ошибок для Telegram бота"""
+    logger.error("Exception while handling Telegram update:", exc_info=context.error)
     
     # Уведомляем пользователя об ошибке
     if update and update.effective_message:
@@ -194,8 +208,13 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
         except Exception:
             logger.error("Failed to send error notification to user")
 
+def run_flask():
+    """Запуск Flask сервера"""
+    logger.info(f"Starting Flask server on port {PORT}")
+    http_app.run(host='0.0.0.0', port=PORT)
+
 def main() -> None:
-    # Создаем Application
+    # Создаем Telegram Application
     application = Application.builder().token(TOKEN).build()
     
     # Добавляем глобальный обработчик ошибок
@@ -212,28 +231,19 @@ def main() -> None:
     
     # Регистрируем обработчики
     application.add_handler(conv_handler)
-    application.add_handler(CommandHandler("health", health))
+    application.add_handler(CommandHandler("health", telegram_health))
     
     # Запускаем keep-alive в отдельном потоке
     if WEBHOOK_URL:
         threading.Thread(target=keep_alive, daemon=True).start()
         logger.info(f"Starting keep-alive service for {WEBHOOK_URL}")
     
-    # Используем Webhook
-    if WEBHOOK_URL:
-        logger.info(f"Starting bot in WEBHOOK mode on port {PORT}")
-        
-        # Установка webhook
-        application.run_webhook(
-            listen="0.0.0.0",
-            port=PORT,
-            webhook_url=WEBHOOK_URL,
-            secret_token=SECRET_TOKEN,
-            drop_pending_updates=True
-        )
-    else:
-        logger.info("Starting bot in POLLING mode")
-        application.run_polling()
+    # Запускаем Flask в отдельном потоке
+    threading.Thread(target=run_flask, daemon=True).start()
+    
+    # Запускаем Telegram бота в режиме polling
+    logger.info("Starting Telegram bot in POLLING mode")
+    application.run_polling()
 
 if __name__ == "__main__":
     logger.info(f"Starting {BOT_NAME}")
@@ -241,5 +251,7 @@ if __name__ == "__main__":
     logger.info(f"WEBHOOK_URL: {WEBHOOK_URL}")
     logger.info(f"PORT: {PORT}")
     logger.info(f"SECRET_TOKEN: {SECRET_TOKEN[:3]}...")
+    logger.info(f"TG_LINK: {TG_LINK}")
+    logger.info(f"VK_LINK: {VK_LINK}")
     
     main()
