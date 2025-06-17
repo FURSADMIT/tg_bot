@@ -110,15 +110,27 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         context.user_data['answers'] = []
         context.user_data['current_question'] = 0
         
-        await update.message.reply_text(
-            f"Привет, {user.first_name}! Я {BOT_NAME}, помогу определить твою предрасположенность к тестированию ПО.\n\n"
+        # Приветственное сообщение
+        welcome_text = (
+            f"Привет, {user.first_name}! Я {BOT_NAME}, помогу оценить твои качества для работы в тестировании.\n\n"
             "Ответь на 5 вопросов по шкале от 1 до 5, где:\n"
             "1 - совсем не обо мне\n"
-            "5 - это точно про меня\n\n"
-            "Первый вопрос:\n" + questions[0],
+            "5 - это точно про меня\n"
+        )
+        
+        # Отправляем приветствие
+        await update.message.reply_text(
+            welcome_text,
+            parse_mode="Markdown"
+        )
+        
+        # Отправляем первый вопрос с клавиатурой
+        await update.message.reply_text(
+            questions[0],
             reply_markup=markup,
             parse_mode="Markdown"
         )
+        
         return QUESTIONS
     except Exception as e:
         logger.error(f"Error in start command: {str(e)}")
@@ -133,7 +145,7 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         
         # Получаем текущее состояние
         answers = context.user_data.get('answers', [])
-        current_question = context.user_data.get('current_question', 0)
+        current_question_index = context.user_data.get('current_question_index', 0)
         
         # Проверка корректности ответа
         if not answer.isdigit() or int(answer) < 1 or int(answer) > 5:
@@ -141,18 +153,28 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
                 "Пожалуйста, выберите цифру от 1 до 5",
                 reply_markup=markup
             )
-            await update.message.reply_text(questions[current_question], reply_markup=markup, parse_mode="Markdown")
+            await update.message.reply_text(
+                questions[current_question_index],
+                reply_markup=markup,
+                parse_mode="Markdown"
+            )
             return QUESTIONS
         
         # Сохраняем ответ
         answers.append(int(answer))
         context.user_data['answers'] = answers
-        next_question = len(answers)
-        context.user_data['current_question'] = next_question
+        
+        # Переходим к следующему вопросу
+        next_question_index = current_question_index + 1
+        context.user_data['current_question_index'] = next_question_index
         
         # Проверяем, все ли вопросы отвечены
-        if next_question < len(questions):
-            await update.message.reply_text(questions[next_question], reply_markup=markup, parse_mode="Markdown")
+        if next_question_index < len(questions):
+            await update.message.reply_text(
+                questions[next_question_index],
+                reply_markup=markup,
+                parse_mode="Markdown"
+            )
             return QUESTIONS
         
         # Все вопросы отвечены - показываем результат
@@ -162,7 +184,7 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         if total >= 20:
             result += (
                 "🚀 *Отличные задатки для тестировщика!*\n\n"
-                "Твой результат показывает высокую предрасположенность к QA. "
+                "Твой результат показывает высокую склонность к тестированию. "
                 "Чтобы превратить это в профессию:\n\n"
                 f"👉 Напиши мне в Telegram: [@Dmitrii_Fursa8]({TG_LINK})\n"
                 f"👉 Подписывайся на меня в ВКонтакте: [Dmitrii Fursa]({VK_LINK})"
@@ -177,7 +199,7 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
             )
         else:
             result += (
-                "💡 *Тестирование ПО может быть не твоим основным призванием, но это не значит, что IT не для тебя!*\n\n"
+                "💡 *Тестирование может быть не твоим основным призванием, но это не значит, что IT не для тебя!*\n\n"
                 "Если ты хочешь:\n"
                 "• Стать тестировщиком и войти в IT\n"
                 "• Получить востребованную профессию\n"
