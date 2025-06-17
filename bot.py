@@ -46,7 +46,7 @@ def home():
 # Состояния разговора
 QUESTIONS = 1
 
-# Вопросы теста
+# Вопросы теста с правильной нумерацией
 questions = [
     "*1.* *Замечаете ли вы опечатки в текстах?*",
     "*2.* *Любите ли вы решать головоломки и логические задачи?*",
@@ -79,37 +79,17 @@ def create_telegram_app():
     
     return application
 
-def keep_alive():
-    """Функция для поддержания активности приложения"""
-    time.sleep(15)
-    logger.info("Starting keep-alive service")
-    
-    while True:
-        try:
-            if WEBHOOK_URL:
-                health_url = f"{WEBHOOK_URL}/health"
-                response = requests.get(health_url, timeout=10)
-                logger.info(f"Keep-alive: Service status {response.status_code}")
-            else:
-                logger.info("Keep-alive: WEBHOOK_URL not set")
-        except Exception as e:
-            logger.error(f"Keep-alive error: {str(e)}")
-        time.sleep(300)
-
-async def telegram_health(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Telegram команда для проверки работоспособности"""
-    await update.message.reply_text(f"✅ {BOT_NAME} работает нормально!")
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     try:
         user = update.message.from_user
         logger.info(f"Command /start received from user {user.id}")
         
-        # Очищаем предыдущие ответы
+        # Очищаем предыдущие ответы и устанавливаем индекс текущего вопроса
         context.user_data.clear()
         context.user_data['answers'] = []
-        context.user_data['current_question'] = 0
+        context.user_data['current_question_index'] = 0  # Начинаем с первого вопроса
         
+        # Задаем первый вопрос
         await update.message.reply_text(
             f"Привет, {user.first_name}! Я {BOT_NAME}, помогу определить твою *склонность к тестированию*.\n\n"
             "Ответь на 5 вопросов по шкале от 1 до 5, где:\n"
@@ -133,7 +113,7 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         
         # Получаем текущее состояние
         answers = context.user_data.get('answers', [])
-        current_question = context.user_data.get('current_question', 0)
+        current_question_index = context.user_data.get('current_question_index', 0)
         
         # Проверка корректности ответа
         if not answer.isdigit() or int(answer) < 1 or int(answer) > 5:
@@ -141,19 +121,25 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
                 "Пожалуйста, выберите цифру от 1 до 5",
                 reply_markup=markup
             )
-            await update.message.reply_text(questions[current_question], reply_markup=markup, parse_mode="Markdown")
+            await update.message.reply_text(
+                questions[current_question_index],
+                reply_markup=markup,
+                parse_mode="Markdown"
+            )
             return QUESTIONS
         
         # Сохраняем ответ
         answers.append(int(answer))
         context.user_data['answers'] = answers
-        next_question = len(answers)
-        context.user_data['current_question'] = next_question
+        
+        # Переходим к следующему вопросу
+        next_question_index = current_question_index + 1
+        context.user_data['current_question_index'] = next_question_index
         
         # Проверяем, все ли вопросы отвечены
-        if next_question < len(questions):
+        if next_question_index < len(questions):
             await update.message.reply_text(
-                questions[next_question],
+                questions[next_question_index],
                 reply_markup=markup,
                 parse_mode="Markdown"
             )
@@ -217,6 +203,10 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         logger.error(f"Error in cancel command: {str(e)}")
         return ConversationHandler.END
 
+async def telegram_health(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Telegram команда для проверки работоспособности"""
+    await update.message.reply_text(f"✅ {BOT_NAME} работает нормально!")
+
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Обработчик ошибок для Telegram бота"""
     logger.error("Exception while handling Telegram update:", exc_info=context.error)
@@ -237,6 +227,19 @@ def run_flask():
     app.run(host='0.0.0.0', port=PORT)
 
 def main():
+    # Проверяем, не запущен ли уже бот
+    try:
+        # Создаем временное приложение для проверки
+        test_app = Application.builder().token(TOKEN).build()
+        
+        # Пробуем получить информацию о боте
+        bot_info = test_app.bot.get_me()
+        logger.info(f"Bot info: {bot_info}")
+    except Exception as e:
+        logger.error(f"Failed to get bot info: {str(e)}")
+        logger.error("Another instance of the bot might be running. Exiting.")
+        return
+
     # Запускаем Flask в отдельном потоке
     flask_thread = threading.Thread(target=run_flask, daemon=True)
     flask_thread.start()
@@ -248,7 +251,22 @@ def main():
     # Создаем и запускаем Telegram приложение
     telegram_app = create_telegram_app()
     logger.info("Starting Telegram bot in POLLING mode")
-    telegram_app.run_polling()
+    
+    # Добавляем обработку KeyboardInterrupt для корректного завершения
+    try:
+        telegram_app.run_polling(
+            allowed_updates=Update.ALL_TYPES,
+            close_loop=False,  # Не закрывать event loop при остановке
+            stop_signals=None   # Отключаем обработку сигналов остановки
+        )
+    except KeyboardInterrupt:
+        logger.info("Bot stopped by user")
+    except Exception as e:
+        logger.error(f"Error in polling: {str(e)}")
+    finally:
+        logger.info("Shutting down bot...")
+        telegram_app.stop()
+        telegram_app.shutdown()
 
 if __name__ == "__main__":
     logger.info(f"Starting {BOT_NAME}")

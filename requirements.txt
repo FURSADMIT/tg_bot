@@ -2,3 +2,4 @@ python-telegram-bot==20.3
 python-dotenv==1.0.0
 requests==2.31.0
 Flask==3.0.3
+gunicorn==21.2.0  # Для production-деплоя на Render
