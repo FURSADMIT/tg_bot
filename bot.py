@@ -4,7 +4,7 @@ import threading
 import requests
 import time
 from flask import Flask, jsonify
-from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
+from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove, KeyboardButton, MenuButtonCommands
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -51,13 +51,51 @@ questions = [
     "*1.* *Замечаю опечатки в текстах*",
     "*2.* *Люблю решать головоломки и логические задачи*",
     "*3.* *Могу многократно проверять одно и то же*",
-    "*4.* *Изучая новое приложение, стараетюсь разобраться во всех его функциях*",
+    "*4.* *Изучая новое приложение, стараюсь разобраться во всех его функциях*",
     "*5.* *Насколько вам интересны новые технологии и IT-сфера?*"
 ]
 
-# Клавиатура для ответов
-reply_keyboard = [["1", "2", "3", "4", "5"]]
-markup = ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True)
+# Клавиатура для ответов с эмодзи
+reply_keyboard = [[
+    KeyboardButton("1 😞"),
+    KeyboardButton("2 😐"),
+    KeyboardButton("3 🙂"),
+    KeyboardButton("4 😊"),
+    KeyboardButton("5 😍")
+]]
+markup = ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True, resize_keyboard=True)
+
+# Текст для кнопки "О курсе"
+ABOUT_COURSE_TEXT = """
+🚀 *Мой путь в IT* 🚀
+
+Я прошел путь от директора магазина (Adidas/Reebok) до тестировщика в одной из лучших IT-компаний!
+
+Я всегда любил свою работу, вкладывался в нее на все 100%, но за 8 лет в рознице понял, что не готов пропускать жизнь мимо и хочу большего: путешествия, новые возможности и карьерный рост, поэтому решил сменить сферу.
+
+🔍 *Как я начинал в IT:*
+- Прошел ряд курсов (в том числе получил диплом в одной из крупнейших школ на рынке онлайн-образования)
+- Изучил сотни доступных видео и статей
+- На их основе создал обучающие материалы для себя
+
+Только благодаря этому мне удалось войти и закрепиться в новой сфере. Сейчас я собрал самые эффективные практики и готов делиться своими знаниями.
+
+🧪 *Тестирование* - это реальный и доступный каждому порог входа в IT.
+
+📚 *Что вас ждет на курсе?*
+- Теория и практические занятия (онлайн)
+- Поддержка на всех этапах обучения
+- Подготовка к собеседованиям и успешное трудоустройство
+
+💼 *А после курса:*
+- Новые возможности IT-компаний
+- Конкурентная ЗП, ДМС, льготы
+- Возможность удаленной работы
+- Крутые офисы с тренажерными залами, бесплатной едой, вечеринками
+- Большие перспективы на будущее
+
+📩 За подробностями пишите мне в личные сообщения - все расскажу!
+"""
 
 def keep_alive():
     """Функция для поддержания активности приложения"""
@@ -92,13 +130,38 @@ def create_telegram_app():
     # Регистрируем обработчики
     application.add_handler(conv_handler)
     application.add_handler(CommandHandler("health", telegram_health))
+    application.add_handler(CommandHandler("about", about_course))
     application.add_error_handler(error_handler)
     
+    # Устанавливаем меню бота
+    application.bot.set_my_commands([
+        ("start", "Начать тест"),
+        ("about", "О курсе тестирования")
+    ])
+    
     return application
+
+async def set_bot_menu(application: Application):
+    """Устанавливаем меню бота"""
+    await application.bot.set_chat_menu_button(
+        menu_button=MenuButtonCommands()
+    )
 
 async def telegram_health(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Telegram команда для проверки работоспособности"""
     await update.message.reply_text(f"✅ {BOT_NAME} работает нормально!")
+
+async def about_course(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Команда для информации о курсе"""
+    try:
+        await update.message.reply_text(
+            ABOUT_COURSE_TEXT,
+            parse_mode="Markdown",
+            disable_web_page_preview=True
+        )
+    except Exception as e:
+        logger.error(f"Error in about command: {str(e)}")
+        await update.message.reply_text("⚠️ Произошла ошибка при отображении информации о курсе.")
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     try:
@@ -108,14 +171,16 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         # Очищаем предыдущие ответы
         context.user_data.clear()
         context.user_data['answers'] = []
-        context.user_data['current_question'] = 0
+        context.user_data['current_question_index'] = 0
         
-        # Приветственное сообщение
+        # Приветственное сообщение с кнопками
         welcome_text = (
-            f"Привет, {user.first_name}! Я {BOT_NAME}, помогу оценить твои качества для работы в тестировании.\n\n"
-            "Ответь на 5 тезисов по шкале от 1 до 5, где:\n"
-            "1 - совсем не обо мне\n"
-            "5 - это точно про меня\n"
+            f"👋 Привет, {user.first_name}! Я {BOT_NAME}, помогу оценить твои качества для работы в тестировании.\n\n"
+            "🔹 Нажми /start - чтобы начать тест\n"
+            "🔹 Нажми /about - чтобы узнать о курсе тестирования\n\n"
+            "Ответь на 5 тезисов по шкале от 1 до 5:\n"
+            "1 😞 - совсем не обо мне\n"
+            "5 😍 - это точно про меня\n"
         )
         
         # Отправляем приветствие
@@ -140,15 +205,18 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     try:
         user = update.message.from_user
-        answer = update.message.text
-        logger.info(f"User {user.id} answer: {answer}")
+        answer_text = update.message.text
+        logger.info(f"User {user.id} answer: {answer_text}")
+        
+        # Извлекаем цифру из ответа (учитываем эмодзи)
+        answer = ''.join(filter(str.isdigit, answer_text))
         
         # Получаем текущее состояние
         answers = context.user_data.get('answers', [])
         current_question_index = context.user_data.get('current_question_index', 0)
         
         # Проверка корректности ответа
-        if not answer.isdigit() or int(answer) < 1 or int(answer) > 5:
+        if not answer or int(answer) < 1 or int(answer) > 5:
             await update.message.reply_text(
                 "Пожалуйста, выберите цифру от 1 до 5",
                 reply_markup=markup
@@ -165,122 +233,4 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         context.user_data['answers'] = answers
         
         # Переходим к следующему вопросу
-        next_question_index = current_question_index + 1
-        context.user_data['current_question_index'] = next_question_index
-        
-        # Проверяем, все ли вопросы отвечены
-        if next_question_index < len(questions):
-            await update.message.reply_text(
-                questions[next_question_index],
-                reply_markup=markup,
-                parse_mode="Markdown"
-            )
-            return QUESTIONS
-        
-        # Все вопросы отвечены - показываем результат
-        total = sum(answers)
-        result = "🔍 *Ваши результаты* 🔍\n\n"
-        
-        if total >= 20:
-            result += (
-                "🚀 *Отличные задатки для тестировщика!*\n\n"
-                "Твой результат показывает высокую склонность к тестированию. "
-                "Чтобы превратить это в профессию:\n\n"
-                f"👉 Напиши мне в Telegram: [@Dmitrii_Fursa8]({TG_LINK})\n"
-                f"👉 Подписывайся на меня в ВКонтакте: [Dmitrii Fursa]({VK_LINK})"
-            )
-        elif total >= 15:
-            result += (
-                "🌟 *Хороший потенциал!*\n\n"
-                "У тебя есть базовые качества тестировщика. "
-                "Чтобы развить их до профессионального уровня:\n\n"
-                f"👉 Напиши мне в Telegram: [@Dmitrii_Fursa8]({TG_LINK})\n"
-                f"👉 Подписывайся на меня в ВКонтакте: [Dmitrii Fursa]({VK_LINK})"
-            )
-        else:
-            result += (
-                "💡 *Тестирование может быть не твоим основным призванием, но это не значит, что IT не для тебя!*\n\n"
-                "Если ты хочешь:\n"
-                "• Стать тестировщиком и войти в IT\n"
-                "• Получить востребованную профессию\n"
-                "• Освоить навыки, которые откроют двери в мир технологий\n\n"
-                f"👉 Пиши мне в Telegram: [@Dmitrii_Fursa8]({TG_LINK})\n"
-                f"👉 Подписывайся на меня в ВКонтакте: [Dmitrii Fursa]({VK_LINK})"
-            )
-        
-        await update.message.reply_text(
-            result,
-            parse_mode="Markdown",
-            disable_web_page_preview=True,
-            reply_markup=ReplyKeyboardRemove()
-        )
-        
-        # Кнопка для повторного прохождения
-        await update.message.reply_text(
-            "Хотите пройти тест еще раз? Используйте команду /start"
-        )
-        
-        logger.info(f"Test completed for user {user.id}. Score: {total}")
-        return ConversationHandler.END
-    except Exception as e:
-        logger.error(f"Error handling answer: {str(e)}")
-        await update.message.reply_text("⚠️ Произошла ошибка. Попробуйте начать заново командой /start")
-        return ConversationHandler.END
-
-async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    try:
-        await update.message.reply_text("Тест отменен", reply_markup=ReplyKeyboardRemove())
-        return ConversationHandler.END
-    except Exception as e:
-        logger.error(f"Error in cancel command: {str(e)}")
-        return ConversationHandler.END
-
-async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Обработчик ошибок для Telegram бота"""
-    logger.error("Exception while handling Telegram update:", exc_info=context.error)
-    
-    # Уведомляем пользователя об ошибке
-    if update and update.effective_message:
-        try:
-            await context.bot.send_message(
-                chat_id=update.effective_chat.id,
-                text="😢 Произошла непредвиденная ошибка. Пожалуйста, попробуйте снова."
-            )
-        except Exception:
-            logger.error("Failed to send error notification to user")
-
-def run_flask():
-    """Запуск Flask сервера"""
-    logger.info(f"Starting Flask server on port {PORT}")
-    app.run(host='0.0.0.0', port=PORT)
-
-def main():
-    # Запускаем Flask в отдельном потоке
-    flask_thread = threading.Thread(target=run_flask, daemon=True)
-    flask_thread.start()
-    logger.info("Flask server started in background thread")
-    
-    # Даем время Flask запуститься
-    time.sleep(2)
-    
-    # Создаем и запускаем Telegram приложение
-    telegram_app = create_telegram_app()
-    logger.info("Starting Telegram bot in POLLING mode")
-    telegram_app.run_polling()
-
-if __name__ == "__main__":
-    logger.info(f"Starting {BOT_NAME}")
-    logger.info(f"TOKEN: {TOKEN[:5]}...{TOKEN[-5:]}")
-    logger.info(f"WEBHOOK_URL: {WEBHOOK_URL}")
-    logger.info(f"PORT: {PORT}")
-    logger.info(f"SECRET_TOKEN: {SECRET_TOKEN[:3]}...")
-    logger.info(f"TG_LINK: {TG_LINK}")
-    logger.info(f"VK_LINK: {VK_LINK}")
-    
-    # Запускаем keep-alive в отдельном потоке
-    if WEBHOOK_URL:
-        keep_alive_thread = threading.Thread(target=keep_alive, daemon=True)
-        keep_alive_thread.start()
-        logger.info(f"Starting keep-alive service for {WEBHOOK_URL}")
-    
-    main()
+        next_question_index
