@@ -48,11 +48,11 @@ QUESTIONS = 1
 
 # Вопросы теста
 questions = [
-    "*1.* *Замечаю опечатки в текстах*",
-    "*2.* *Люблю решать головоломки и логические задачи*",
-    "*3.* *Могу многократно проверять одно и то же*",
-    "*4.* *Изучая новое приложение, стараюсь разобраться во всех его функциях*",
-    "*5.* *Насколько вам интересны новые технологии и IT-сфера?*"
+    "*1.* *Замечаю опечатки в текстах.*",
+    "*2.* *Люблю решать головоломки и логические задачи.*",
+    "*3.* *Могу многократно проверять одно и то же.*",
+    "*4.* *Изучая новое приложение, стараюсь разобраться во всех его функциях.*",
+    "*5.* *Интересуюсь новыми технологиями и IT-сферой.*"
 ]
 
 # Клавиатура для ответов с эмодзи
@@ -61,10 +61,10 @@ reply_keyboard = [
 ]
 markup = ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True, resize_keyboard=True)
 
-# Главное меню
+# Главное меню на русском
 main_menu_keyboard = [
-    [KeyboardButton("/start"), KeyboardButton("/about")],
-    [KeyboardButton("/health")]
+    [KeyboardButton("Начать тест 🚀"), KeyboardButton("О курсе ℹ️")],
+    [KeyboardButton("Проверить бота ✅")]
 ]
 main_menu_markup = ReplyKeyboardMarkup(main_menu_keyboard, resize_keyboard=True)
 
@@ -91,7 +91,7 @@ def create_telegram_app():
     
     # Настройка ConversationHandler
     conv_handler = ConversationHandler(
-        entry_points=[CommandHandler("start", start)],
+        entry_points=[CommandHandler("start", start), MessageHandler(filters.Regex("^Начать тест 🚀$"), start)],
         states={
             QUESTIONS: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_answer)]
         },
@@ -102,13 +102,15 @@ def create_telegram_app():
     application.add_handler(conv_handler)
     application.add_handler(CommandHandler("health", telegram_health))
     application.add_handler(CommandHandler("about", about_course))
+    application.add_handler(MessageHandler(filters.Regex("^О курсе ℹ️$"), about_course))
+    application.add_handler(MessageHandler(filters.Regex("^Проверить бота ✅$"), telegram_health))
     application.add_handler(CommandHandler("menu", show_menu))
     application.add_error_handler(error_handler)
     
-    # Устанавливаем меню бота
+    # Устанавливаем русскоязычные команды меню бота
     application.bot.set_my_commands([
         ("start", "Начать тест"),
-        ("about", "О курсе"),
+        ("about", "Информация о курсе"),
         ("health", "Проверить работу бота"),
         ("menu", "Показать меню")
     ])
