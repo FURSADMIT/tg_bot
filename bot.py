@@ -13,6 +13,7 @@ from telegram.ext import (
     ContextTypes,
     ConversationHandler
 )
+import asyncio
 
 # Конфигурация
 TOKEN = "7292601652:AAFAv9wtDXK_2CI3zHGu9RCHQsvPCfzwjUE"
@@ -96,21 +97,28 @@ def keep_alive():
 async def post_init(application: Application) -> None:
     """Инициализация вебхука"""
     if WEBHOOK_URL:
-        await application.bot.set_webhook(
-            url=f"{WEBHOOK_URL}/webhook",
-            secret_token=SECRET_TOKEN,
-            drop_pending_updates=True
-        )
-        logger.info(f"Webhook set to: {WEBHOOK_URL}/webhook")
+        try:
+            await application.bot.set_webhook(
+                url=f"{WEBHOOK_URL}/webhook",
+                secret_token=SECRET_TOKEN,
+                drop_pending_updates=True
+            )
+            logger.info(f"Webhook successfully set to: {WEBHOOK_URL}/webhook")
+        except Exception as e:
+            logger.error(f"Failed to set webhook: {str(e)}")
     else:
         logger.warning("WEBHOOK_URL not set, running without webhook")
 
-    await application.bot.set_my_commands([
-        ("start", "Начать тест"),
-        ("about", "О курсе"),
-        ("health", "Проверить работу бота"),
-        ("menu", "Показать меню")
-    ])
+    try:
+        await application.bot.set_my_commands([
+            ("start", "Начать тест"),
+            ("about", "О курсе"),
+            ("health", "Проверить работу бота"),
+            ("menu", "Показать меню")
+        ])
+        logger.info("Bot commands set successfully")
+    except Exception as e:
+        logger.error(f"Failed to set bot commands: {str(e)}")
 
 def create_telegram_app():
     """Создание приложения Telegram"""
@@ -337,7 +345,6 @@ def main():
     if WEBHOOK_URL:
         threading.Thread(target=keep_alive, daemon=True).start()
     
-    import asyncio
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     
@@ -354,4 +361,8 @@ if __name__ == "__main__":
     logger.info(f"Starting {BOT_NAME}")
     logger.info(f"Token: {TOKEN[:5]}...{TOKEN[-5:]}")
     logger.info(f"Webhook URL: {WEBHOOK_URL}")
+    logger.info(f"Port: {PORT}")
+    logger.info(f"Secret token: {SECRET_TOKEN[:3]}...")
+    
+    # Убедимся, что все асинхронные задачи выполняются в правильном цикле событий
     main()
