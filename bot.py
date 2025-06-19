@@ -46,14 +46,20 @@ def home():
     return jsonify({"message": "QA Polls Bot is running"}), 200
 
 @app.route('/webhook', methods=['POST'])
-async def webhook():
+def webhook():
     if request.headers.get('X-Telegram-Bot-Api-Secret-Token') != SECRET_TOKEN:
         logger.warning("Invalid secret token received")
         return jsonify({"status": "forbidden"}), 403
     
     json_data = request.get_json()
     update = Update.de_json(json_data, application.bot)
-    await application.update_queue.put(update)
+    
+    # Запускаем обработку обновления в асинхронном цикле
+    asyncio.run_coroutine_threadsafe(
+        application.update_queue.put(update),
+        application.updater._event_loop
+    )
+    
     return jsonify({"status": "ok"}), 200
 
 # Состояния разговора
@@ -326,9 +332,11 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
         )
 
 def run_flask():
-    app.run(host='0.0.0.0', port=PORT)
+    """Запуск Flask сервера"""
+    app.run(host='0.0.0.0', port=PORT, threaded=True)
 
 async def run_bot():
+    """Запуск Telegram бота"""
     global application
     application = create_telegram_app()
     await application.initialize()
@@ -336,21 +344,30 @@ async def run_bot():
     logger.info("Bot started")
 
 async def shutdown():
+    """Завершение работы бота"""
     global application
     if application:
         await application.stop()
         await application.shutdown()
 
 def main():
-    if WEBHOOK_URL:
-        threading.Thread(target=keep_alive, daemon=True).start()
+    # Запускаем Flask в отдельном потоке
+    flask_thread = threading.Thread(target=run_flask, daemon=True)
+    flask_thread.start()
     
+    # Запускаем keep-alive в отдельном потоке
+    if WEBHOOK_URL:
+        keep_alive_thread = threading.Thread(target=keep_alive, daemon=True)
+        keep_alive_thread.start()
+        logger.info(f"Starting keep-alive service for {WEBHOOK_URL}")
+    
+    # Запускаем бота в основном потоке
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     
     try:
         loop.run_until_complete(run_bot())
-        run_flask()
+        loop.run_forever()  # Бесконечный цикл для обработки сообщений
     except KeyboardInterrupt:
         logger.info("Shutting down...")
         loop.run_until_complete(shutdown())
@@ -364,5 +381,4 @@ if __name__ == "__main__":
     logger.info(f"Port: {PORT}")
     logger.info(f"Secret token: {SECRET_TOKEN[:3]}...")
     
-    # Убедимся, что все асинхронные задачи выполняются в правильном цикле событий
     main()
