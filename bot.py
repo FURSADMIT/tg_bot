@@ -18,8 +18,6 @@ PORT = int(os.environ.get('PORT', 10000))
 WEBHOOK_URL = os.getenv('WEBHOOK_URL')
 SECRET_TOKEN = os.getenv('SECRET_TOKEN', 'default-secret-token')
 BOT_NAME = "@QaPollsBot"
-TG_LINK = "https://t.me/Dmitrii_Fursa8"
-VK_LINK = "https://m.vk.com/id119459855"
 
 # Настройка логирования
 logging.basicConfig(
@@ -28,42 +26,36 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Создаем Flask приложение
 app = Flask(__name__)
-
-# Глобальная переменная для Application
 application = None
 
-# Состояния разговора
+# Состояния и вопросы
 QUESTIONS = 1
-
-# Вопросы теста
 questions = [
     "1. Замечаю опечатки в текстах",
-    "2. Люблю решать головоломки и логические задачи",
-    "3. Могу многократно проверять одно и то же",
-    "4. Изучая новое приложение, стараюсь разобраться во всех его функциях",
-    "5. Насколько вам интересны новые технологии и IT-сфера?"
+    "2. Люблю решать головоломки",
+    "3. Многократно проверяю одно и то же",
+    "4. Изучаю все функции новых приложений",
+    "5. Интересуюсь IT и технологиями"
 ]
 
-# Клавиатура для ответов
+# Клавиатуры
 reply_keyboard = [["1 😞", "2 😐", "3 😊", "4 😃", "5 🤩"]]
 markup = ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True, resize_keyboard=True)
 
-# Главное меню с яркими эмодзи
 main_menu_keyboard = [
     [KeyboardButton("Начать тест 🚀"), KeyboardButton("О курсе ✨")],
     [KeyboardButton("Помощь ❓")]
 ]
 main_menu_markup = ReplyKeyboardMarkup(main_menu_keyboard, resize_keyboard=True)
 
-@app.route('/health')
-def health():
-    return jsonify({"status": "ok", "bot": BOT_NAME}), 200
-
 @app.route('/')
 def home():
-    return jsonify({"message": "QA Polls Bot is running"}), 200
+    return jsonify({"status": "ok"}), 200
+
+@app.route('/health')
+def health():
+    return jsonify({"status": "healthy"}), 200
 
 @app.route('/webhook', methods=['POST'])
 async def webhook():
@@ -75,18 +67,19 @@ async def webhook():
     await application.update_queue.put(update)
     return jsonify({"status": "ok"}), 200
 
-async def post_init(application: Application) -> None:
-    await application.bot.set_webhook(
+async def post_init(app):
+    await app.bot.set_webhook(
         url=f"{WEBHOOK_URL}/webhook",
-        secret_token=SECRET_TOKEN
+        secret_token=SECRET_TOKEN,
+        drop_pending_updates=True
     )
-    await application.bot.set_my_commands([
+    await app.bot.set_my_commands([
         ("start", "Начать тест"),
-        ("about", "Информация о курсе"),
-        ("help", "Помощь по боту")
+        ("about", "О курсе"),
+        ("help", "Помощь")
     ])
 
-def create_telegram_app():
+def create_app():
     global application
     application = Application.builder().token(TOKEN).post_init(post_init).build()
     
@@ -102,62 +95,18 @@ def create_telegram_app():
     application.add_handler(CommandHandler("about", about_course))
     application.add_handler(MessageHandler(filters.Regex("^О курсе ✨$"), about_course))
     application.add_handler(CommandHandler("help", help_command))
-    application.add_handler(MessageHandler(filters.Regex("^Помощь ❓$"), help_command))
     application.add_error_handler(error_handler)
     
     return application
 
-async def show_menu(update: Update):
-    await update.message.reply_text(
-        "🏠 Главное меню:",
-        reply_markup=main_menu_markup
-    )
-
-async def about_course(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    about_text = """
-✨ *О курсе* ✨
-
-Я прошел путь от директора магазина (Adidas/Reebok) до тестировщика в одной из лучших IT-компаний!
-
-🚀 Что вас ждет:
-- Практические занятия с реальными проектами
-- Подготовка к собеседованиям
-- Поддержка после трудоустройства
-
-💼 После обучения:
-- Конкурентная зарплата от 80 000₽
-- Возможность удаленной работы
-- Карьерный рост в IT
-
-📩 Пишите мне в Telegram: [@Dmitrii_Fursa8](https://t.me/Dmitrii_Fursa8)
-"""
-    await update.message.reply_text(
-        about_text,
-        parse_mode="Markdown",
-        disable_web_page_preview=True,
-        reply_markup=main_menu_markup
-    )
-
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "ℹ️ Помощь по боту:\n\n"
-        "• Нажмите 'Начать тест 🚀' для прохождения опроса\n"
-        "• 'О курсе ✨' - подробная информация\n"
-        "• Для отмены теста используйте /cancel",
-        reply_markup=main_menu_markup
-    )
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     try:
-        user = update.message.from_user
-        logger.info(f"New test started by {user.id}")
-        
         context.user_data.clear()
         context.user_data['answers'] = []
         context.user_data['current_question'] = 0
         
         await update.message.reply_text(
-            f"Привет, {user.first_name}! Я {BOT_NAME}, помогу оценить твои качества для работы в тестировании.\n\n"
+            f"Привет! Я {BOT_NAME}, помогу оценить твои качества для работы в тестировании.\n\n"
             "Ответь на 5 вопросов по шкале от 1 до 5:\n"
             "1 😞 - совсем не обо мне\n"
             "5 🤩 - это точно про меня",
@@ -166,27 +115,18 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         
         await ask_question(update, context)
         return QUESTIONS
-
     except Exception as e:
         logger.error(f"Start error: {str(e)}")
-        await update.message.reply_text(
-            "⚠️ Ошибка при запуске. Попробуйте позже.",
-            reply_markup=main_menu_markup
-        )
+        await update.message.reply_text("⚠️ Ошибка при запуске. Попробуйте позже.")
         return ConversationHandler.END
 
 async def ask_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
     current = context.user_data['current_question']
-    await update.message.reply_text(
-        questions[current],
-        reply_markup=markup
-    )
+    await update.message.reply_text(questions[current], reply_markup=markup)
 
 async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     try:
-        user = update.message.from_user
         answer = update.message.text.split()[0]
-        
         if not answer.isdigit() or int(answer) < 1 or int(answer) > 5:
             await update.message.reply_text("Пожалуйста, выберите от 1 до 5")
             await ask_question(update, context)
@@ -201,41 +141,39 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         
         await show_results(update, context)
         return ConversationHandler.END
-
     except Exception as e:
         logger.error(f"Handle answer error: {str(e)}")
-        await update.message.reply_text(
-            "⚠️ Ошибка обработки ответа. Начните тест заново.",
-            reply_markup=main_menu_markup
-        )
+        await update.message.reply_text("⚠️ Ошибка обработки ответа.")
         return ConversationHandler.END
 
 async def show_results(update: Update, context: ContextTypes.DEFAULT_TYPE):
     total = sum(context.user_data['answers'])
-    result = "🔍 Ваши результаты:\n\n"
-    
-    if total >= 20:
-        result += "🚀 Отличные задатки тестировщика!"
-    elif total >= 15:
-        result += "👍 Хороший потенциал!"
-    else:
-        result += "💡 IT - большая сфера, найдется место для каждого!"
-    
-    result += f"\n\nНабрано баллов: {total}/25\n\nПодробнее: /about"
-    
+    result = f"🔍 Ваш результат: {total}/25\n\n"
+    result += "🚀 Отличный результат!" if total >= 20 else "👍 Хороший потенциал!" if total >=15 else "💡 Есть куда расти!"
+    await update.message.reply_text(result, reply_markup=main_menu_markup)
+
+async def about_course(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        result,
+        "✨ О курсе:\n\n"
+        "Профессиональное обучение тестированию с нуля.\n\n"
+        "Подробнее: @Dmitrii_Fursa8",
+        reply_markup=main_menu_markup
+    )
+
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "ℹ️ Помощь:\n\n"
+        "• Начать тест - /start\n"
+        "• О курсе - /about\n"
+        "• Отмена теста - /cancel",
         reply_markup=main_menu_markup
     )
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    await update.message.reply_text(
-        "Тест отменён",
-        reply_markup=main_menu_markup
-    )
+    await update.message.reply_text("Тест отменён", reply_markup=main_menu_markup)
     return ConversationHandler.END
 
-async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
     logger.error("Error:", exc_info=context.error)
     if update and update.effective_message:
         await context.bot.send_message(
@@ -246,10 +184,10 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
 
 async def run_bot():
     global application
-    application = create_telegram_app()
+    application = create_app()
     await application.initialize()
     await application.start()
-    logger.info("Bot started in webhook mode")
+    logger.info("Bot started")
 
 async def shutdown():
     global application
