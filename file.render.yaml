@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: qa-polls-bot
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python bot.py
+    envVars:
+      - key: SECRET_TOKEN
+        generateValue: true
