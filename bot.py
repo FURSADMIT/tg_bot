@@ -16,9 +16,9 @@ from telegram.ext import (
 import asyncio
 
 # Конфигурация
-TOKEN = "7292601652:AAFAv9wtDXK_2CI3zHGu9RCHQsvPCfzwjUE"
+TOKEN = os.getenv('TELEGRAM_BOT_TOKEN', '7292601652:AAFAv9wtDXK_2CI3zHGu9RCHQsvPCfzwjUE')
 PORT = int(os.environ.get('PORT', 10000))
-WEBHOOK_URL = os.getenv('RENDER_EXTERNAL_URL')
+WEBHOOK_URL = os.getenv('WEBHOOK_URL', 'https://qa-polls-bot.onrender.com')
 SECRET_TOKEN = os.getenv('SECRET_TOKEN', os.urandom(16).hex())
 BOT_NAME = "@QaPollsBot"
 TG_LINK = "https://t.me/Dmitrii_Fursa8"
@@ -74,7 +74,7 @@ questions = [
     "*5.* *Насколько вам интересны новые технологии и IT-сфера?*"
 ]
 
-# Клавиатура для ответов
+# Клавиатура для ответов с эмодзи
 reply_keyboard = [["1 😞", "2 😐", "3 😊", "4 😃", "5 🤩"]]
 markup = ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True, resize_keyboard=True)
 
@@ -86,62 +86,51 @@ main_menu_keyboard = [
 main_menu_markup = ReplyKeyboardMarkup(main_menu_keyboard, resize_keyboard=True)
 
 def keep_alive():
-    """Поддержание активности приложения"""
-    time.sleep(10)
+    """Функция для поддержания активности приложения"""
+    time.sleep(15)
     logger.info("Starting keep-alive service")
     
     while True:
         try:
             if WEBHOOK_URL:
                 health_url = f"{WEBHOOK_URL}/health"
-                response = requests.get(health_url, timeout=5)
-                logger.info(f"Keep-alive status: {response.status_code}")
+                response = requests.get(health_url, timeout=10)
+                logger.info(f"Keep-alive: Service status {response.status_code}")
+            else:
+                logger.info("Keep-alive: WEBHOOK_URL not set")
         except Exception as e:
-            logger.warning(f"Keep-alive error: {str(e)}")
+            logger.error(f"Keep-alive error: {str(e)}")
         time.sleep(300)
 
 async def post_init(application: Application) -> None:
-    """Инициализация вебхука"""
-    if WEBHOOK_URL:
-        try:
-            await application.bot.set_webhook(
-                url=f"{WEBHOOK_URL}/webhook",
-                secret_token=SECRET_TOKEN,
-                drop_pending_updates=True
-            )
-            logger.info(f"Webhook successfully set to: {WEBHOOK_URL}/webhook")
-        except Exception as e:
-            logger.error(f"Failed to set webhook: {str(e)}")
-    else:
-        logger.warning("WEBHOOK_URL not set, running without webhook")
-
-    try:
-        await application.bot.set_my_commands([
-            ("start", "Начать тест"),
-            ("about", "О курсе"),
-            ("health", "Проверить работу бота"),
-            ("menu", "Показать меню")
-        ])
-        logger.info("Bot commands set successfully")
-    except Exception as e:
-        logger.error(f"Failed to set bot commands: {str(e)}")
+    """Настройка вебхука после инициализации приложения"""
+    await application.bot.set_webhook(
+        url=f"{WEBHOOK_URL}/webhook",
+        secret_token=SECRET_TOKEN,
+        drop_pending_updates=True
+    )
+    await application.bot.set_my_commands([
+        ("start", "Начать тест"),
+        ("about", "О курсе"),
+        ("health", "Проверить работу бота"),
+        ("menu", "Показать меню")
+    ])
 
 def create_telegram_app():
-    """Создание приложения Telegram"""
+    """Создаем и настраиваем Telegram приложение"""
     global application
     application = Application.builder().token(TOKEN).post_init(post_init).build()
     
+    # Настройка ConversationHandler
     conv_handler = ConversationHandler(
-        entry_points=[
-            CommandHandler("start", start),
-            MessageHandler(filters.Regex("^Начать тест 🚀$"), start)
-        ],
+        entry_points=[CommandHandler("start", start)],
         states={
             QUESTIONS: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_answer)]
         },
         fallbacks=[CommandHandler("cancel", cancel)]
     )
     
+    # Регистрируем обработчики
     application.add_handler(conv_handler)
     application.add_handler(CommandHandler("health", telegram_health))
     application.add_handler(CommandHandler("about", about_course))
@@ -153,6 +142,7 @@ def create_telegram_app():
     return application
 
 async def show_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Показать главное меню"""
     await update.message.reply_text(
         "🏠 *Главное меню* 🏠\n\nВыберите действие:",
         reply_markup=main_menu_markup,
@@ -160,6 +150,7 @@ async def show_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
 async def about_course(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Информация о курсе"""
     about_text = """
 🌟 *О курсе* 🌟
 
@@ -191,6 +182,7 @@ async def about_course(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 За подробностями пишите мне в Telegram: [@Dmitrii_Fursa8](https://t.me/Dmitrii_Fursa8)
 """
+    
     await update.message.reply_text(
         about_text,
         parse_mode="Markdown",
@@ -199,6 +191,7 @@ async def about_course(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     )
 
 async def telegram_health(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Telegram команда для проверки работоспособности"""
     await update.message.reply_text(
         f"✅ {BOT_NAME} работает нормально!",
         reply_markup=main_menu_markup
@@ -207,12 +200,14 @@ async def telegram_health(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     try:
         user = update.message.from_user
-        logger.info(f"User {user.id} started the test")
+        logger.info(f"Command /start received from user {user.id}")
         
+        # Очищаем предыдущие ответы
         context.user_data.clear()
         context.user_data['answers'] = []
         context.user_data['current_question_index'] = 0
         
+        # Приветственное сообщение
         welcome_text = (
             f"Привет, {user.first_name}! Я {BOT_NAME}, помогу оценить твои качества для работы в тестировании.\n\n"
             "Ответь на 5 тезисов по шкале от 1 до 5, где:\n"
@@ -220,12 +215,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             "5 🤩 - это точно про меня\n"
         )
         
+        # Отправляем приветствие
         await update.message.reply_text(
             welcome_text,
             parse_mode="Markdown",
             reply_markup=ReplyKeyboardRemove()
         )
         
+        # Отправляем первый вопрос с клавиатурой
         await update.message.reply_text(
             questions[0],
             reply_markup=markup,
@@ -234,7 +231,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         
         return QUESTIONS
     except Exception as e:
-        logger.error(f"Start error: {str(e)}")
+        logger.error(f"Error in start command: {str(e)}")
         await update.message.reply_text(
             "⚠️ Произошла ошибка при запуске. Попробуйте снова.",
             reply_markup=main_menu_markup
@@ -243,24 +240,39 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
 async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     try:
+        user = update.message.from_user
         answer_text = update.message.text
-        answer = answer_text.split()[0]
+        logger.info(f"User {user.id} answer: {answer_text}")
         
+        # Извлекаем цифру из ответа (может быть с эмодзи)
+        answer = answer_text.split()[0]  # Берем первую часть (цифру)
+        
+        # Получаем текущее состояние
         answers = context.user_data.get('answers', [])
         current_question_index = context.user_data.get('current_question_index', 0)
         
+        # Проверка корректности ответа
         if not answer.isdigit() or int(answer) < 1 or int(answer) > 5:
             await update.message.reply_text(
                 "Пожалуйста, выберите цифру от 1 до 5",
                 reply_markup=markup
             )
+            await update.message.reply_text(
+                questions[current_question_index],
+                reply_markup=markup,
+                parse_mode="Markdown"
+            )
             return QUESTIONS
         
+        # Сохраняем ответ
         answers.append(int(answer))
         context.user_data['answers'] = answers
+        
+        # Переходим к следующему вопросу
         next_question_index = current_question_index + 1
         context.user_data['current_question_index'] = next_question_index
         
+        # Проверяем, все ли вопросы отвечены
         if next_question_index < len(questions):
             await update.message.reply_text(
                 questions[next_question_index],
@@ -269,6 +281,7 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
             )
             return QUESTIONS
         
+        # Все вопросы отвечены - показываем результат
         total = sum(answers)
         result = "🔍 *Ваши результаты* 🔍\n\n"
         
@@ -306,9 +319,10 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
             reply_markup=main_menu_markup
         )
         
+        logger.info(f"Test completed for user {user.id}. Score: {total}")
         return ConversationHandler.END
     except Exception as e:
-        logger.error(f"Handle answer error: {str(e)}")
+        logger.error(f"Error handling answer: {str(e)}")
         await update.message.reply_text(
             "⚠️ Произошла ошибка. Попробуйте начать заново командой /start",
             reply_markup=main_menu_markup
@@ -316,23 +330,34 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         return ConversationHandler.END
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    await update.message.reply_text(
-        "Тест отменен",
-        reply_markup=main_menu_markup
-    )
-    return ConversationHandler.END
-
-async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
-    logger.error("Exception while handling update:", exc_info=context.error)
-    if update and update.effective_message:
-        await context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            text="😢 Произошла непредвиденная ошибка. Пожалуйста, попробуйте снова.",
+    try:
+        await update.message.reply_text(
+            "Тест отменен",
             reply_markup=main_menu_markup
         )
+        return ConversationHandler.END
+    except Exception as e:
+        logger.error(f"Error in cancel command: {str(e)}")
+        return ConversationHandler.END
+
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Обработчик ошибок для Telegram бота"""
+    logger.error("Exception while handling Telegram update:", exc_info=context.error)
+    
+    # Уведомляем пользователя об ошибке
+    if update and update.effective_message:
+        try:
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text="😢 Произошла непредвиденная ошибка. Пожалуйста, попробуйте снова.",
+                reply_markup=main_menu_markup
+            )
+        except Exception:
+            logger.error("Failed to send error notification to user")
 
 def run_flask():
     """Запуск Flask сервера"""
+    logger.info(f"Starting Flask server on port {PORT}")
     app.run(host='0.0.0.0', port=PORT, threaded=True)
 
 async def run_bot():
@@ -342,6 +367,13 @@ async def run_bot():
     await application.initialize()
     await application.start()
     logger.info("Bot started")
+    await application.updater.start_webhook(
+        listen="0.0.0.0",
+        port=PORT,
+        url_path="webhook",
+        webhook_url=f"{WEBHOOK_URL}/webhook",
+        secret_token=SECRET_TOKEN
+    )
 
 async def shutdown():
     """Завершение работы бота"""
@@ -351,23 +383,19 @@ async def shutdown():
         await application.shutdown()
 
 def main():
-    # Запускаем Flask в отдельном потоке
-    flask_thread = threading.Thread(target=run_flask, daemon=True)
-    flask_thread.start()
-    
     # Запускаем keep-alive в отдельном потоке
     if WEBHOOK_URL:
-        keep_alive_thread = threading.Thread(target=keep_alive, daemon=True)
-        keep_alive_thread.start()
-        logger.info(f"Starting keep-alive service for {WEBHOOK_URL}")
+        threading.Thread(target=keep_alive, daemon=True).start()
     
-    # Запускаем бота в основном потоке
+    # Запускаем бот в асинхронном режиме
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     
     try:
         loop.run_until_complete(run_bot())
-        loop.run_forever()  # Бесконечный цикл для обработки сообщений
+        logger.info("Bot and webhook setup complete")
+        # Запускаем Flask в основном потоке
+        run_flask()
     except KeyboardInterrupt:
         logger.info("Shutting down...")
         loop.run_until_complete(shutdown())
@@ -376,9 +404,11 @@ def main():
 
 if __name__ == "__main__":
     logger.info(f"Starting {BOT_NAME}")
-    logger.info(f"Token: {TOKEN[:5]}...{TOKEN[-5:]}")
-    logger.info(f"Webhook URL: {WEBHOOK_URL}")
-    logger.info(f"Port: {PORT}")
-    logger.info(f"Secret token: {SECRET_TOKEN[:3]}...")
+    logger.info(f"TOKEN: {TOKEN[:5]}...{TOKEN[-5:]}")
+    logger.info(f"WEBHOOK_URL: {WEBHOOK_URL}")
+    logger.info(f"PORT: {PORT}")
+    logger.info(f"SECRET_TOKEN: {SECRET_TOKEN[:3]}...")
+    logger.info(f"TG_LINK: {TG_LINK}")
+    logger.info(f"VK_LINK: {VK_LINK}")
     
     main()
