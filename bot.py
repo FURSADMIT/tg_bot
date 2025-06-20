@@ -358,7 +358,7 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
 def run_flask():
     """Запуск Flask сервера"""
     logger.info(f"Starting Flask server on port {PORT}")
-    app.run(host='0.0.0.0', port=PORT, threaded=True)
+    app.run(host='0.0.0.0', port=PORT)
 
 async def run_bot():
     """Запуск Telegram бота"""
@@ -366,40 +366,28 @@ async def run_bot():
     application = create_telegram_app()
     await application.initialize()
     await application.start()
-    logger.info("Bot started")
-    
-    # Используем правильный метод для вебхуков
-    await application.run_webhook(
-        listen="0.0.0.0",
-        port=PORT,
-        url_path="/webhook",
-        webhook_url=f"{WEBHOOK_URL}/webhook",
-        secret_token=SECRET_TOKEN
-    )
-
-async def shutdown():
-    """Завершение работы бота"""
-    global application
-    if application:
-        await application.stop()
-        await application.shutdown()
+    logger.info("Bot initialized and started")
 
 def main():
     # Запускаем keep-alive в отдельном потоке
     if WEBHOOK_URL:
-        threading.Thread(target=keep_alive, daemon=True).start()
+        keep_alive_thread = threading.Thread(target=keep_alive, daemon=True)
+        keep_alive_thread.start()
+        logger.info(f"Starting keep-alive service for {WEBHOOK_URL}")
     
-    # Запускаем бот в асинхронном режиме
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    
-    try:
+    # Запускаем бот в асинхронном режиме в отдельном потоке
+    def run_async():
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
         loop.run_until_complete(run_bot())
-    except KeyboardInterrupt:
-        logger.info("Shutting down...")
-        loop.run_until_complete(shutdown())
-    finally:
-        loop.close()
+        loop.run_forever()
+    
+    bot_thread = threading.Thread(target=run_async, daemon=True)
+    bot_thread.start()
+    logger.info("Telegram bot started in background thread")
+    
+    # Запускаем Flask сервер в основном потоке
+    run_flask()
 
 if __name__ == "__main__":
     logger.info(f"Starting {BOT_NAME}")
