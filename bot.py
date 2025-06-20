@@ -367,10 +367,12 @@ async def run_bot():
     await application.initialize()
     await application.start()
     logger.info("Bot started")
-    await application.updater.start_webhook(
+    
+    # Используем правильный метод для вебхуков
+    await application.run_webhook(
         listen="0.0.0.0",
         port=PORT,
-        url_path="webhook",
+        url_path="/webhook",
         webhook_url=f"{WEBHOOK_URL}/webhook",
         secret_token=SECRET_TOKEN
     )
@@ -393,9 +395,6 @@ def main():
     
     try:
         loop.run_until_complete(run_bot())
-        logger.info("Bot and webhook setup complete")
-        # Запускаем Flask в основном потоке
-        run_flask()
     except KeyboardInterrupt:
         logger.info("Shutting down...")
         loop.run_until_complete(shutdown())
