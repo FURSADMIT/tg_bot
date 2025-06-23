@@ -45,9 +45,14 @@ def health():
 def home():
     return jsonify({"message": "QA Polls Bot is running"}), 200
 
+# Добавляем обработчик для URL с токеном
+@app.route(f'/{TOKEN}', methods=['POST'])
+def webhook_by_token():
+    logger.info(f"Received webhook request via token URL")
+    return webhook()
+
 @app.route('/webhook', methods=['POST'])
 def webhook():
-    # Логируем входящий запрос
     logger.info(f"Received webhook request: {request.method} {request.url}")
     
     if request.headers.get('X-Telegram-Bot-Api-Secret-Token') != SECRET_TOKEN:
@@ -64,7 +69,6 @@ def webhook():
             
         update = Update.de_json(json_data, application.bot)
         
-        # Логируем тип обновления
         if update.message:
             logger.info(f"Received message from {update.message.from_user.id}: {update.message.text}")
         elif update.callback_query:
@@ -72,7 +76,6 @@ def webhook():
         else:
             logger.info(f"Received update of type: {update.update_id}")
         
-        # Запускаем обработку обновления
         asyncio.run(process_update(update))
         
         return jsonify({"status": "ok"}), 200
@@ -81,7 +84,6 @@ def webhook():
         return jsonify({"status": "error", "message": str(e)}), 500
 
 async def process_update(update):
-    """Обработка обновления в асинхронном режиме"""
     try:
         logger.info(f"Processing update: {update.update_id}")
         await application.process_update(update)
@@ -91,7 +93,6 @@ async def process_update(update):
 # Состояния разговора
 QUESTIONS = 1
 
-# Вопросы теста
 questions = [
     "*1.* *Замечаю опечатки в текстах*",
     "*2.* *Люблю решать головоломки и логические задачи*",
@@ -100,11 +101,9 @@ questions = [
     "*5.* *Насколько вам интересны новые технологии и IT-сфера?*"
 ]
 
-# Клавиатура для ответов с эмодзи
 reply_keyboard = [["1 😞", "2 😐", "3 😊", "4 😃", "5 🤩"]]
 markup = ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True, resize_keyboard=True)
 
-# Главное меню
 main_menu_keyboard = [
     [KeyboardButton("Начать тест 🚀"), KeyboardButton("О курсе ℹ️")],
     [KeyboardButton("Проверить бота ✅")]
@@ -112,8 +111,6 @@ main_menu_keyboard = [
 main_menu_markup = ReplyKeyboardMarkup(main_menu_keyboard, resize_keyboard=True)
 
 def keep_alive():
-    """Функция для поддержания активности приложения"""
-    # Даем время Flask серверу запуститься
     time.sleep(15)
     logger.info("Starting keep-alive service")
     
@@ -124,7 +121,6 @@ def keep_alive():
                 response = requests.get(health_url, timeout=10)
                 logger.info(f"Keep-alive: Service status {response.status_code}")
                 
-                # Проверка вебхука
                 webhook_url = f"{WEBHOOK_URL}/webhook"
                 test_response = requests.head(webhook_url, timeout=5)
                 logger.info(f"Webhook endpoint check: {test_response.status_code}")
@@ -135,13 +131,17 @@ def keep_alive():
         time.sleep(300)
 
 async def setup_webhook():
-    """Установка вебхука с повторными попытками"""
     max_attempts = 3
     for attempt in range(max_attempts):
         try:
             webhook_url = f"{WEBHOOK_URL}/webhook"
             logger.info(f"Setting webhook (attempt {attempt+1}/{max_attempts}): {webhook_url}")
             
+            # Удаляем старый вебхук
+            await application.bot.delete_webhook()
+            logger.info("Old webhook removed")
+            
+            # Устанавливаем новый вебхук
             await application.bot.set_webhook(
                 url=webhook_url,
                 secret_token=SECRET_TOKEN,
@@ -149,14 +149,7 @@ async def setup_webhook():
             )
             logger.info("Webhook set successfully")
             
-            # Проверяем результат установки
-            webhook_info = await application.bot.get_webhook_info()
-            logger.info(f"Webhook info: {webhook_info}")
-            
-            if webhook_info.url != webhook_url:
-                logger.warning(f"Webhook URL mismatch! Expected: {webhook_url}, Actual: {webhook_info.url}")
-            else:
-                return True
+            return True
         except Exception as e:
             logger.error(f"Error setting webhook: {str(e)}")
             if attempt < max_attempts - 1:
@@ -168,16 +161,13 @@ async def setup_webhook():
     return False
 
 async def post_init(application: Application) -> None:
-    """Настройка после инициализации приложения"""
     logger.info("Running post-initialization")
     
-    # Установка вебхука
     webhook_success = await setup_webhook()
     
     if not webhook_success:
         logger.critical("Webhook setup failed, bot may not receive updates")
     
-    # Установка команд бота
     try:
         await application.bot.set_my_commands([
             ("start", "Начать тест"),
@@ -191,11 +181,9 @@ async def post_init(application: Application) -> None:
         logger.error(f"Error setting bot commands: {str(e)}")
 
 def create_telegram_app():
-    """Создаем и настраиваем Telegram приложение"""
     global application
     application = Application.builder().token(TOKEN).post_init(post_init).build()
     
-    # Настройка ConversationHandler
     conv_handler = ConversationHandler(
         entry_points=[
             CommandHandler("start", start),
@@ -207,7 +195,6 @@ def create_telegram_app():
         fallbacks=[CommandHandler("cancel", cancel)]
     )
     
-    # Регистрируем обработчики
     application.add_handler(conv_handler)
     application.add_handler(CommandHandler("health", telegram_health))
     application.add_handler(CommandHandler("about", about_course))
@@ -220,9 +207,7 @@ def create_telegram_app():
     return application
 
 async def bot_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Проверка статуса бота"""
     try:
-        # Получаем информацию о боте
         me = await context.bot.get_me()
         webhook_info = await context.bot.get_webhook_info()
         
@@ -252,7 +237,6 @@ async def bot_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 async def show_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Показать главное меню"""
     await update.message.reply_text(
         "🏠 *Главное меню* 🏠\n\nВыберите действие:",
         reply_markup=main_menu_markup,
@@ -260,7 +244,6 @@ async def show_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
 async def about_course(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Информация о курсе"""
     about_text = """
 🌟 *О курсе* 🌟
 
@@ -301,7 +284,6 @@ async def about_course(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     )
 
 async def telegram_health(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Telegram команда для проверки работоспособности"""
     await update.message.reply_text(
         f"✅ {BOT_NAME} работает нормально!",
         reply_markup=main_menu_markup
@@ -312,12 +294,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         user = update.message.from_user
         logger.info(f"Command /start received from user {user.id}")
         
-        # Очищаем предыдущие ответы
         context.user_data.clear()
         context.user_data['answers'] = []
         context.user_data['current_question_index'] = 0
         
-        # Приветственное сообщение
         welcome_text = (
             f"Привет, {user.first_name}! Я {BOT_NAME}, помогу оценить твои качества для работы в тестировании.\n\n"
             "Ответь на 5 тезисов по шкале от 1 до 5, где:\n"
@@ -325,14 +305,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             "5 🤩 - это точно про меня\n"
         )
         
-        # Отправляем приветствие
         await update.message.reply_text(
             welcome_text,
             parse_mode="Markdown",
             reply_markup=ReplyKeyboardRemove()
         )
         
-        # Отправляем первый вопрос с клавиатурой
         await update.message.reply_text(
             questions[0],
             reply_markup=markup,
@@ -354,14 +332,11 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         answer_text = update.message.text
         logger.info(f"User {user.id} answer: {answer_text}")
         
-        # Извлекаем цифру из ответа (может быть с эмодзи)
-        answer = answer_text.split()[0]  # Берем первую часть (цифру)
+        answer = answer_text.split()[0]
         
-        # Получаем текущее состояние
         answers = context.user_data.get('answers', [])
         current_question_index = context.user_data.get('current_question_index', 0)
         
-        # Проверка корректности ответа
         if not answer.isdigit() or int(answer) < 1 or int(answer) > 5:
             await update.message.reply_text(
                 "Пожалуйста, выберите цифру от 1 до 5",
@@ -374,15 +349,12 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
             )
             return QUESTIONS
         
-        # Сохраняем ответ
         answers.append(int(answer))
         context.user_data['answers'] = answers
         
-        # Переходим к следующему вопросу
         next_question_index = current_question_index + 1
         context.user_data['current_question_index'] = next_question_index
         
-        # Проверяем, все ли вопросы отвечены
         if next_question_index < len(questions):
             await update.message.reply_text(
                 questions[next_question_index],
@@ -391,7 +363,6 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
             )
             return QUESTIONS
         
-        # Все вопросы отвечены - показываем результат
         total = sum(answers)
         result = "🔍 *Ваши результаты* 🔍\n\n"
         
@@ -451,10 +422,8 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         return ConversationHandler.END
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Обработчик ошибок для Telegram бота"""
     logger.error("Exception while handling Telegram update:", exc_info=context.error)
     
-    # Уведомляем пользователя об ошибке
     if update and update.effective_message:
         try:
             await context.bot.send_message(
@@ -466,44 +435,36 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
             logger.error("Failed to send error notification to user")
 
 def run_flask():
-    """Запуск Flask сервера"""
     logger.info(f"Starting Flask server on port {PORT}")
     app.run(host='0.0.0.0', port=PORT, threaded=True)
 
 async def run_bot():
-    """Запуск Telegram бота"""
     global application
     application = create_telegram_app()
     await application.initialize()
     await application.start()
     logger.info("Bot initialized and started")
     
-    # Проверяем информацию о боте
     me = await application.bot.get_me()
     logger.info(f"Bot info: {me.full_name} (@{me.username})")
     
-    # Проверяем вебхук
     try:
         webhook_info = await application.bot.get_webhook_info()
         logger.info(f"Webhook info: URL={webhook_info.url}, Pending updates={webhook_info.pending_update_count}")
     except Exception as e:
         logger.error(f"Error getting webhook info: {str(e)}")
     
-    # Ждем вечно, чтобы приложение не завершалось
     await asyncio.Event().wait()
 
 def main():
-    # Запускаем keep-alive в отдельном потоке
     if WEBHOOK_URL:
         keep_alive_thread = threading.Thread(target=keep_alive, daemon=True)
         keep_alive_thread.start()
         logger.info(f"Starting keep-alive service for {WEBHOOK_URL}")
     
-    # Запускаем Flask в отдельном потоке
     flask_thread = threading.Thread(target=run_flask, daemon=True)
     flask_thread.start()
     
-    # Запускаем бота в главном потоке
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     try:
