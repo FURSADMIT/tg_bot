@@ -148,7 +148,15 @@ async def setup_webhook():
                 drop_pending_updates=True
             )
             logger.info("Webhook set successfully")
-            return True
+            
+            # Проверяем результат установки
+            webhook_info = await application.bot.get_webhook_info()
+            logger.info(f"Webhook info: {webhook_info}")
+            
+            if webhook_info.url != webhook_url:
+                logger.warning(f"Webhook URL mismatch! Expected: {webhook_url}, Actual: {webhook_info.url}")
+            else:
+                return True
         except Exception as e:
             logger.error(f"Error setting webhook: {str(e)}")
             if attempt < max_attempts - 1:
@@ -161,6 +169,8 @@ async def setup_webhook():
 
 async def post_init(application: Application) -> None:
     """Настройка после инициализации приложения"""
+    logger.info("Running post-initialization")
+    
     # Установка вебхука
     webhook_success = await setup_webhook()
     
