@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 
 # Глобальная переменная для хранения приложения Telegram
-application = None
+telegram_application = None  # Переименовали для избежания конфликта имен
 
 @app.route('/health')
 def health():
@@ -45,7 +45,6 @@ def health():
 def home():
     return jsonify({"message": "QA Polls Bot is running"}), 200
 
-# Основной эндпоинт для вебхука
 @app.route('/webhook', methods=['POST'])
 def webhook():
     logger.info(f"Received webhook request: {request.method} {request.url}")
@@ -64,17 +63,13 @@ def webhook():
             logger.warning("Empty JSON data received")
             return jsonify({"status": "bad request"}), 400
             
-        update = Update.de_json(json_data, application.bot)
+        update = Update.de_json(json_data, telegram_application.bot)
         
-        if update.message:
-            logger.info(f"Received message from {update.message.from_user.id}: {update.message.text}")
-        elif update.callback_query:
-            logger.info(f"Received callback from {update.callback_query.from_user.id}")
-        else:
-            logger.info(f"Received update of type: {update.update_id}")
-        
-        # Обработка обновления в асинхронном режиме
-        asyncio.run_coroutine_threadsafe(process_update(update), application.create_task)
+        # Асинхронная обработка обновления
+        asyncio.run_coroutine_threadsafe(
+            process_update(update),
+            telegram_application.update_queue._loop
+        )
         
         return jsonify({"status": "ok"}), 200
     except Exception as e:
@@ -84,7 +79,7 @@ def webhook():
 async def process_update(update):
     try:
         logger.info(f"Processing update: {update.update_id}")
-        await application.process_update(update)
+        await telegram_application.process_update(update)
     except Exception as e:
         logger.error(f"Error processing update: {e}", exc_info=True)
 
@@ -124,46 +119,40 @@ def keep_alive():
             logger.error(f"Keep-alive error: {str(e)}")
         time.sleep(300)
 
-async def setup_webhook():
-    max_attempts = 3
-    for attempt in range(max_attempts):
-        try:
-            webhook_url = f"{WEBHOOK_URL}/webhook"
-            logger.info(f"Setting webhook (attempt {attempt+1}/{max_attempts}): {webhook_url}")
-            
-            # Устанавливаем новый вебхук
-            await application.bot.set_webhook(
-                url=webhook_url,
-                secret_token=SECRET_TOKEN,
-                drop_pending_updates=True
-            )
-            logger.info("Webhook set successfully")
-            
-            # Проверяем установку
-            webhook_info = await application.bot.get_webhook_info()
-            logger.info(f"Webhook info: URL={webhook_info.url}, Pending updates={webhook_info.pending_update_count}")
-            
-            return True
-        except Exception as e:
-            logger.error(f"Error setting webhook: {str(e)}", exc_info=True)
-            if attempt < max_attempts - 1:
-                wait_time = 5 * (attempt + 1)
-                logger.info(f"Retrying in {wait_time} seconds...")
-                await asyncio.sleep(wait_time)
+async def setup_webhook(app: Application):
+    webhook_url = f"{WEBHOOK_URL}/webhook"
+    logger.info(f"Setting webhook to: {webhook_url}")
     
-    logger.error("Failed to set webhook after multiple attempts")
-    return False
+    try:
+        await app.bot.delete_webhook()
+        logger.info("Old webhook removed")
+    except Exception as e:
+        logger.warning(f"Error deleting old webhook: {str(e)}")
 
-async def post_init(application: Application) -> None:
+    try:
+        await app.bot.set_webhook(
+            url=webhook_url,
+            secret_token=SECRET_TOKEN,
+            drop_pending_updates=True,
+            allowed_updates=["message", "callback_query"]
+        )
+        logger.info("Webhook set successfully")
+        return True
+    except Exception as e:
+        logger.error(f"Error setting webhook: {str(e)}", exc_info=True)
+        return False
+
+async def post_init(app: Application) -> None:
     logger.info("Running post-initialization")
     
-    webhook_success = await setup_webhook()
-    
+    # Установка вебхука
+    webhook_success = await setup_webhook(app)
     if not webhook_success:
         logger.critical("Webhook setup failed, bot may not receive updates")
     
+    # Установка команд меню
     try:
-        await application.bot.set_my_commands([
+        await app.bot.set_my_commands([
             ("start", "Начать тест"),
             ("about", "О курсе"),
             ("health", "Проверить работу бота"),
@@ -174,10 +163,13 @@ async def post_init(application: Application) -> None:
     except Exception as e:
         logger.error(f"Error setting bot commands: {str(e)}", exc_info=True)
 
-def create_telegram_app():
-    global application
-    application = Application.builder().token(TOKEN).post_init(post_init).build()
+def create_telegram_app() -> Application:
+    global telegram_application
+    builder = Application.builder().token(TOKEN)
+    builder.post_init(post_init)
+    telegram_application = builder.build()
     
+    # Обработчики команд
     conv_handler = ConversationHandler(
         entry_points=[
             CommandHandler("start", start),
@@ -189,16 +181,16 @@ def create_telegram_app():
         fallbacks=[CommandHandler("cancel", cancel)]
     )
     
-    application.add_handler(conv_handler)
-    application.add_handler(CommandHandler("health", telegram_health))
-    application.add_handler(CommandHandler("about", about_course))
-    application.add_handler(CommandHandler("status", bot_status))
-    application.add_handler(MessageHandler(filters.Regex("^О курсе ℹ️$"), about_course))
-    application.add_handler(MessageHandler(filters.Regex("^Проверить бота ✅$"), telegram_health))
-    application.add_handler(CommandHandler("menu", show_menu))
-    application.add_error_handler(error_handler)
+    telegram_application.add_handler(conv_handler)
+    telegram_application.add_handler(CommandHandler("health", telegram_health))
+    telegram_application.add_handler(CommandHandler("about", about_course))
+    telegram_application.add_handler(CommandHandler("status", bot_status))
+    telegram_application.add_handler(MessageHandler(filters.Regex("^О курсе ℹ️$"), about_course))
+    telegram_application.add_handler(MessageHandler(filters.Regex("^Проверить бота ✅$"), telegram_health))
+    telegram_application.add_handler(CommandHandler("menu", show_menu))
+    telegram_application.add_error_handler(error_handler)
     
-    return application
+    return telegram_application
 
 async def bot_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
@@ -432,21 +424,26 @@ def run_flask():
     app.run(host='0.0.0.0', port=PORT, threaded=True)
 
 async def run_bot():
-    global application
-    application = create_telegram_app()
-    await application.initialize()
-    await application.start()
+    global telegram_application
+    telegram_application = create_telegram_app()
+    
+    # Инициализация приложения
+    await telegram_application.initialize()
+    await telegram_application.start()
     logger.info("Bot initialized and started")
     
-    me = await application.bot.get_me()
+    # Информация о боте
+    me = await telegram_application.bot.get_me()
     logger.info(f"Bot info: {me.full_name} (@{me.username})")
     
+    # Информация о вебхуке
     try:
-        webhook_info = await application.bot.get_webhook_info()
+        webhook_info = await telegram_application.bot.get_webhook_info()
         logger.info(f"Webhook info: URL={webhook_info.url}, Pending updates={webhook_info.pending_update_count}")
     except Exception as e:
         logger.error(f"Error getting webhook info: {str(e)}")
     
+    # Бесконечное ожидание
     await asyncio.Event().wait()
 
 def main():
