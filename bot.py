@@ -45,23 +45,20 @@ def health():
 def home():
     return jsonify({"message": "QA Polls Bot is running"}), 200
 
-# Добавляем обработчик для URL с токеном
-@app.route(f'/{TOKEN}', methods=['POST'])
-def webhook_by_token():
-    logger.info(f"Received webhook request via token URL")
-    return webhook()
-
+# Основной эндпоинт для вебхука
 @app.route('/webhook', methods=['POST'])
 def webhook():
     logger.info(f"Received webhook request: {request.method} {request.url}")
     
-    if request.headers.get('X-Telegram-Bot-Api-Secret-Token') != SECRET_TOKEN:
-        logger.warning("Invalid secret token received")
+    # Проверка секретного токена
+    secret_token = request.headers.get('X-Telegram-Bot-Api-Secret-Token')
+    if secret_token != SECRET_TOKEN:
+        logger.warning(f"Invalid secret token received: {secret_token} (expected: {SECRET_TOKEN})")
         return jsonify({"status": "forbidden"}), 403
     
     try:
         json_data = request.get_json()
-        logger.info(f"Webhook JSON data: {json_data}")
+        logger.debug(f"Webhook JSON data: {json_data}")
         
         if not json_data:
             logger.warning("Empty JSON data received")
@@ -76,11 +73,12 @@ def webhook():
         else:
             logger.info(f"Received update of type: {update.update_id}")
         
-        asyncio.run(process_update(update))
+        # Обработка обновления в асинхронном режиме
+        asyncio.run_coroutine_threadsafe(process_update(update), application.create_task)
         
         return jsonify({"status": "ok"}), 200
     except Exception as e:
-        logger.error(f"Error processing webhook: {str(e)}")
+        logger.error(f"Error processing webhook: {str(e)}", exc_info=True)
         return jsonify({"status": "error", "message": str(e)}), 500
 
 async def process_update(update):
@@ -88,7 +86,7 @@ async def process_update(update):
         logger.info(f"Processing update: {update.update_id}")
         await application.process_update(update)
     except Exception as e:
-        logger.error(f"Error processing update: {e}")
+        logger.error(f"Error processing update: {e}", exc_info=True)
 
 # Состояния разговора
 QUESTIONS = 1
@@ -120,10 +118,6 @@ def keep_alive():
                 health_url = f"{WEBHOOK_URL}/health"
                 response = requests.get(health_url, timeout=10)
                 logger.info(f"Keep-alive: Service status {response.status_code}")
-                
-                webhook_url = f"{WEBHOOK_URL}/webhook"
-                test_response = requests.head(webhook_url, timeout=5)
-                logger.info(f"Webhook endpoint check: {test_response.status_code}")
             else:
                 logger.info("Keep-alive: WEBHOOK_URL not set")
         except Exception as e:
@@ -137,10 +131,6 @@ async def setup_webhook():
             webhook_url = f"{WEBHOOK_URL}/webhook"
             logger.info(f"Setting webhook (attempt {attempt+1}/{max_attempts}): {webhook_url}")
             
-            # Удаляем старый вебхук
-            await application.bot.delete_webhook()
-            logger.info("Old webhook removed")
-            
             # Устанавливаем новый вебхук
             await application.bot.set_webhook(
                 url=webhook_url,
@@ -149,9 +139,13 @@ async def setup_webhook():
             )
             logger.info("Webhook set successfully")
             
+            # Проверяем установку
+            webhook_info = await application.bot.get_webhook_info()
+            logger.info(f"Webhook info: URL={webhook_info.url}, Pending updates={webhook_info.pending_update_count}")
+            
             return True
         except Exception as e:
-            logger.error(f"Error setting webhook: {str(e)}")
+            logger.error(f"Error setting webhook: {str(e)}", exc_info=True)
             if attempt < max_attempts - 1:
                 wait_time = 5 * (attempt + 1)
                 logger.info(f"Retrying in {wait_time} seconds...")
@@ -178,7 +172,7 @@ async def post_init(application: Application) -> None:
         ])
         logger.info("Bot commands set successfully")
     except Exception as e:
-        logger.error(f"Error setting bot commands: {str(e)}")
+        logger.error(f"Error setting bot commands: {str(e)}", exc_info=True)
 
 def create_telegram_app():
     global application
@@ -220,8 +214,7 @@ async def bot_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"• URL: {webhook_info.url}\n"
             f"• Ожидает обновлений: {webhook_info.pending_update_count}\n"
             f"• Ошибки: {webhook_info.last_error_message or 'Нет'}\n\n"
-            f"🔄 *Последняя активность:*\n"
-            f"• Время: {webhook_info.last_synchronization_error_date or 'Нет данных'}"
+            f"🔐 *Секретный токен:* `{SECRET_TOKEN[:3]}...{SECRET_TOKEN[-3:]}`"
         )
         
         await update.message.reply_text(
@@ -230,7 +223,7 @@ async def bot_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=main_menu_markup
         )
     except Exception as e:
-        logger.error(f"Error in bot_status: {str(e)}")
+        logger.error(f"Error in bot_status: {str(e)}", exc_info=True)
         await update.message.reply_text(
             "⚠️ Ошибка при получении статуса бота",
             reply_markup=main_menu_markup
@@ -319,7 +312,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         
         return QUESTIONS
     except Exception as e:
-        logger.error(f"Error in start command: {str(e)}")
+        logger.error(f"Error in start command: {str(e)}", exc_info=True)
         await update.message.reply_text(
             "⚠️ Произошла ошибка при запуске. Попробуйте снова.",
             reply_markup=main_menu_markup
@@ -403,7 +396,7 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         logger.info(f"Test completed for user {user.id}. Score: {total}")
         return ConversationHandler.END
     except Exception as e:
-        logger.error(f"Error handling answer: {str(e)}")
+        logger.error(f"Error handling answer: {str(e)}", exc_info=True)
         await update.message.reply_text(
             "⚠️ Произошла ошибка. Попробуйте начать заново командой /start",
             reply_markup=main_menu_markup
@@ -418,7 +411,7 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         )
         return ConversationHandler.END
     except Exception as e:
-        logger.error(f"Error in cancel command: {str(e)}")
+        logger.error(f"Error in cancel command: {str(e)}", exc_info=True)
         return ConversationHandler.END
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -431,8 +424,8 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
                 text="😢 Произошла непредвиденная ошибка. Пожалуйста, попробуйте снова.",
                 reply_markup=main_menu_markup
             )
-        except Exception:
-            logger.error("Failed to send error notification to user")
+        except Exception as e:
+            logger.error(f"Failed to send error notification: {str(e)}")
 
 def run_flask():
     logger.info(f"Starting Flask server on port {PORT}")
@@ -472,7 +465,7 @@ def main():
     except KeyboardInterrupt:
         logger.info("Bot stopped by user")
     except Exception as e:
-        logger.error(f"Error running bot: {str(e)}")
+        logger.error(f"Error running bot: {str(e)}", exc_info=True)
     finally:
         loop.close()
         logger.info("Event loop closed")
