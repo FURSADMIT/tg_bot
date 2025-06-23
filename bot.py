@@ -91,6 +91,10 @@ main_menu_markup = ReplyKeyboardMarkup(main_menu_keyboard, resize_keyboard=True)
 
 def keep_alive():
     """Функция для поддержания активности приложения"""
+    # Даем время Flask серверу запуститься
+    time.sleep(15)
+    logger.info("Starting keep-alive service")
+    
     while True:
         try:
             if WEBHOOK_URL:
@@ -105,6 +109,8 @@ def keep_alive():
 
 async def post_init(application: Application) -> None:
     """Настройка вебхука после инициализации приложения"""
+    # Добавляем задержку перед установкой вебхука
+    await asyncio.sleep(2)
     await application.bot.set_webhook(
         url=f"{WEBHOOK_URL}/webhook",
         secret_token=SECRET_TOKEN,
@@ -372,17 +378,9 @@ async def run_bot():
     await application.initialize()
     await application.start()
     logger.info("Bot initialized and started")
-    await application.updater.start_webhook(
-        listen="0.0.0.0",
-        port=PORT,
-        url_path=TOKEN,
-        webhook_url=f"{WEBHOOK_URL}/{TOKEN}"
-    )
-    await application.bot.set_webhook(
-        url=f"{WEBHOOK_URL}/webhook",
-        secret_token=SECRET_TOKEN
-    )
-    logger.info("Webhook set up successfully")
+    
+    # Ждем вечно, чтобы приложение не завершалось
+    await asyncio.Event().wait()
 
 def main():
     # Запускаем keep-alive в отдельном потоке
@@ -391,13 +389,21 @@ def main():
         keep_alive_thread.start()
         logger.info(f"Starting keep-alive service for {WEBHOOK_URL}")
     
-    # Запускаем бот в асинхронном режиме
+    # Запускаем бот в асинхронном режиме в основном потоке
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-    loop.run_until_complete(run_bot())
     
-    # Запускаем Flask сервер в основном потоке
-    run_flask()
+    # Запускаем Flask в отдельном потоке
+    flask_thread = threading.Thread(target=run_flask, daemon=True)
+    flask_thread.start()
+    
+    # Запускаем бота
+    try:
+        loop.run_until_complete(run_bot())
+    except KeyboardInterrupt:
+        pass
+    finally:
+        loop.close()
 
 if __name__ == "__main__":
     logger.info(f"Starting {BOT_NAME}")
