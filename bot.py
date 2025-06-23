@@ -19,7 +19,7 @@ import asyncio
 TOKEN = os.getenv('TELEGRAM_BOT_TOKEN', '7292601652:AAFAv9wtDXK_2CI3zHGu9RCHQsvPCfzwjUE')
 PORT = int(os.environ.get('PORT', 10000))
 WEBHOOK_URL = os.getenv('WEBHOOK_URL', 'https://qa-polls-bot.onrender.com')
-SECRET_TOKEN = os.getenv('SECRET_TOKEN', os.urandom(16).hex())
+SECRET_TOKEN = os.getenv('SECRET_TOKEN', 'your_secret_token_here')
 BOT_NAME = "@QaPollsBot"
 TG_LINK = "https://t.me/Dmitrii_Fursa8"
 VK_LINK = "https://m.vk.com/id119459855"
@@ -54,13 +54,17 @@ def webhook():
     json_data = request.get_json()
     update = Update.de_json(json_data, application.bot)
     
-    # Запускаем обработку обновления в асинхронном цикле
-    asyncio.run_coroutine_threadsafe(
-        application.update_queue.put(update),
-        application.updater._event_loop
-    )
+    # Запускаем обработку обновления
+    asyncio.run(process_update(update))
     
     return jsonify({"status": "ok"}), 200
+
+async def process_update(update):
+    """Обработка обновления в асинхронном режиме"""
+    try:
+        await application.process_update(update)
+    except Exception as e:
+        logger.error(f"Error processing update: {e}")
 
 # Состояния разговора
 QUESTIONS = 1
@@ -87,9 +91,6 @@ main_menu_markup = ReplyKeyboardMarkup(main_menu_keyboard, resize_keyboard=True)
 
 def keep_alive():
     """Функция для поддержания активности приложения"""
-    time.sleep(15)
-    logger.info("Starting keep-alive service")
-    
     while True:
         try:
             if WEBHOOK_URL:
@@ -115,6 +116,7 @@ async def post_init(application: Application) -> None:
         ("health", "Проверить работу бота"),
         ("menu", "Показать меню")
     ])
+    logger.info("Webhook set up successfully")
 
 def create_telegram_app():
     """Создаем и настраиваем Telegram приложение"""
@@ -123,7 +125,10 @@ def create_telegram_app():
     
     # Настройка ConversationHandler
     conv_handler = ConversationHandler(
-        entry_points=[CommandHandler("start", start)],
+        entry_points=[
+            CommandHandler("start", start),
+            MessageHandler(filters.Regex("^Начать тест 🚀$"), start)
+        ],
         states={
             QUESTIONS: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_answer)]
         },
@@ -358,7 +363,7 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
 def run_flask():
     """Запуск Flask сервера"""
     logger.info(f"Starting Flask server on port {PORT}")
-    app.run(host='0.0.0.0', port=PORT)
+    app.run(host='0.0.0.0', port=PORT, threaded=True)
 
 async def run_bot():
     """Запуск Telegram бота"""
@@ -367,6 +372,17 @@ async def run_bot():
     await application.initialize()
     await application.start()
     logger.info("Bot initialized and started")
+    await application.updater.start_webhook(
+        listen="0.0.0.0",
+        port=PORT,
+        url_path=TOKEN,
+        webhook_url=f"{WEBHOOK_URL}/{TOKEN}"
+    )
+    await application.bot.set_webhook(
+        url=f"{WEBHOOK_URL}/webhook",
+        secret_token=SECRET_TOKEN
+    )
+    logger.info("Webhook set up successfully")
 
 def main():
     # Запускаем keep-alive в отдельном потоке
@@ -375,16 +391,10 @@ def main():
         keep_alive_thread.start()
         logger.info(f"Starting keep-alive service for {WEBHOOK_URL}")
     
-    # Запускаем бот в асинхронном режиме в отдельном потоке
-    def run_async():
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        loop.run_until_complete(run_bot())
-        loop.run_forever()
-    
-    bot_thread = threading.Thread(target=run_async, daemon=True)
-    bot_thread.start()
-    logger.info("Telegram bot started in background thread")
+    # Запускаем бот в асинхронном режиме
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(run_bot())
     
     # Запускаем Flask сервер в основном потоке
     run_flask()
