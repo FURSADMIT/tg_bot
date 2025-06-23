@@ -47,21 +47,43 @@ def home():
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
+    # Логируем входящий запрос
+    logger.info(f"Received webhook request: {request.method} {request.url}")
+    
     if request.headers.get('X-Telegram-Bot-Api-Secret-Token') != SECRET_TOKEN:
         logger.warning("Invalid secret token received")
         return jsonify({"status": "forbidden"}), 403
     
-    json_data = request.get_json()
-    update = Update.de_json(json_data, application.bot)
-    
-    # Запускаем обработку обновления
-    asyncio.run(process_update(update))
-    
-    return jsonify({"status": "ok"}), 200
+    try:
+        json_data = request.get_json()
+        logger.info(f"Webhook JSON data: {json_data}")
+        
+        if not json_data:
+            logger.warning("Empty JSON data received")
+            return jsonify({"status": "bad request"}), 400
+            
+        update = Update.de_json(json_data, application.bot)
+        
+        # Логируем тип обновления
+        if update.message:
+            logger.info(f"Received message from {update.message.from_user.id}: {update.message.text}")
+        elif update.callback_query:
+            logger.info(f"Received callback from {update.callback_query.from_user.id}")
+        else:
+            logger.info(f"Received update of type: {update.update_id}")
+        
+        # Запускаем обработку обновления
+        asyncio.run(process_update(update))
+        
+        return jsonify({"status": "ok"}), 200
+    except Exception as e:
+        logger.error(f"Error processing webhook: {str(e)}")
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 async def process_update(update):
     """Обработка обновления в асинхронном режиме"""
     try:
+        logger.info(f"Processing update: {update.update_id}")
         await application.process_update(update)
     except Exception as e:
         logger.error(f"Error processing update: {e}")
@@ -101,28 +123,62 @@ def keep_alive():
                 health_url = f"{WEBHOOK_URL}/health"
                 response = requests.get(health_url, timeout=10)
                 logger.info(f"Keep-alive: Service status {response.status_code}")
+                
+                # Проверка вебхука
+                webhook_url = f"{WEBHOOK_URL}/webhook"
+                test_response = requests.head(webhook_url, timeout=5)
+                logger.info(f"Webhook endpoint check: {test_response.status_code}")
             else:
                 logger.info("Keep-alive: WEBHOOK_URL not set")
         except Exception as e:
             logger.error(f"Keep-alive error: {str(e)}")
         time.sleep(300)
 
+async def setup_webhook():
+    """Установка вебхука с повторными попытками"""
+    max_attempts = 3
+    for attempt in range(max_attempts):
+        try:
+            webhook_url = f"{WEBHOOK_URL}/webhook"
+            logger.info(f"Setting webhook (attempt {attempt+1}/{max_attempts}): {webhook_url}")
+            
+            await application.bot.set_webhook(
+                url=webhook_url,
+                secret_token=SECRET_TOKEN,
+                drop_pending_updates=True
+            )
+            logger.info("Webhook set successfully")
+            return True
+        except Exception as e:
+            logger.error(f"Error setting webhook: {str(e)}")
+            if attempt < max_attempts - 1:
+                wait_time = 5 * (attempt + 1)
+                logger.info(f"Retrying in {wait_time} seconds...")
+                await asyncio.sleep(wait_time)
+    
+    logger.error("Failed to set webhook after multiple attempts")
+    return False
+
 async def post_init(application: Application) -> None:
-    """Настройка вебхука после инициализации приложения"""
-    # Добавляем задержку перед установкой вебхука
-    await asyncio.sleep(2)
-    await application.bot.set_webhook(
-        url=f"{WEBHOOK_URL}/webhook",
-        secret_token=SECRET_TOKEN,
-        drop_pending_updates=True
-    )
-    await application.bot.set_my_commands([
-        ("start", "Начать тест"),
-        ("about", "О курсе"),
-        ("health", "Проверить работу бота"),
-        ("menu", "Показать меню")
-    ])
-    logger.info("Webhook set up successfully")
+    """Настройка после инициализации приложения"""
+    # Установка вебхука
+    webhook_success = await setup_webhook()
+    
+    if not webhook_success:
+        logger.critical("Webhook setup failed, bot may not receive updates")
+    
+    # Установка команд бота
+    try:
+        await application.bot.set_my_commands([
+            ("start", "Начать тест"),
+            ("about", "О курсе"),
+            ("health", "Проверить работу бота"),
+            ("menu", "Показать меню"),
+            ("status", "Статус бота")
+        ])
+        logger.info("Bot commands set successfully")
+    except Exception as e:
+        logger.error(f"Error setting bot commands: {str(e)}")
 
 def create_telegram_app():
     """Создаем и настраиваем Telegram приложение"""
@@ -145,12 +201,45 @@ def create_telegram_app():
     application.add_handler(conv_handler)
     application.add_handler(CommandHandler("health", telegram_health))
     application.add_handler(CommandHandler("about", about_course))
+    application.add_handler(CommandHandler("status", bot_status))
     application.add_handler(MessageHandler(filters.Regex("^О курсе ℹ️$"), about_course))
     application.add_handler(MessageHandler(filters.Regex("^Проверить бота ✅$"), telegram_health))
     application.add_handler(CommandHandler("menu", show_menu))
     application.add_error_handler(error_handler)
     
     return application
+
+async def bot_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Проверка статуса бота"""
+    try:
+        # Получаем информацию о боте
+        me = await context.bot.get_me()
+        webhook_info = await context.bot.get_webhook_info()
+        
+        status_text = (
+            f"🤖 *Статус бота:*\n"
+            f"• Имя: {me.full_name}\n"
+            f"• Username: @{me.username}\n"
+            f"• ID: {me.id}\n\n"
+            f"🌐 *Вебхук:*\n"
+            f"• URL: {webhook_info.url}\n"
+            f"• Ожидает обновлений: {webhook_info.pending_update_count}\n"
+            f"• Ошибки: {webhook_info.last_error_message or 'Нет'}\n\n"
+            f"🔄 *Последняя активность:*\n"
+            f"• Время: {webhook_info.last_synchronization_error_date or 'Нет данных'}"
+        )
+        
+        await update.message.reply_text(
+            status_text,
+            parse_mode="Markdown",
+            reply_markup=main_menu_markup
+        )
+    except Exception as e:
+        logger.error(f"Error in bot_status: {str(e)}")
+        await update.message.reply_text(
+            "⚠️ Ошибка при получении статуса бота",
+            reply_markup=main_menu_markup
+        )
 
 async def show_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Показать главное меню"""
@@ -379,6 +468,17 @@ async def run_bot():
     await application.start()
     logger.info("Bot initialized and started")
     
+    # Проверяем информацию о боте
+    me = await application.bot.get_me()
+    logger.info(f"Bot info: {me.full_name} (@{me.username})")
+    
+    # Проверяем вебхук
+    try:
+        webhook_info = await application.bot.get_webhook_info()
+        logger.info(f"Webhook info: URL={webhook_info.url}, Pending updates={webhook_info.pending_update_count}")
+    except Exception as e:
+        logger.error(f"Error getting webhook info: {str(e)}")
+    
     # Ждем вечно, чтобы приложение не завершалось
     await asyncio.Event().wait()
 
@@ -389,21 +489,22 @@ def main():
         keep_alive_thread.start()
         logger.info(f"Starting keep-alive service for {WEBHOOK_URL}")
     
-    # Запускаем бот в асинхронном режиме в основном потоке
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    
     # Запускаем Flask в отдельном потоке
     flask_thread = threading.Thread(target=run_flask, daemon=True)
     flask_thread.start()
     
-    # Запускаем бота
+    # Запускаем бота в главном потоке
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
     try:
         loop.run_until_complete(run_bot())
     except KeyboardInterrupt:
-        pass
+        logger.info("Bot stopped by user")
+    except Exception as e:
+        logger.error(f"Error running bot: {str(e)}")
     finally:
         loop.close()
+        logger.info("Event loop closed")
 
 if __name__ == "__main__":
     logger.info(f"Starting {BOT_NAME}")
